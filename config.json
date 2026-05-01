@@ -26,6 +26,8 @@
   "popup_border_radius": 6,
   "popup_border_width": 1,
   "popup_wrap_mode": "word",
+  "popup_mouse_offset_x": 0,
+  "popup_mouse_offset_y": 20,
   "exit_hotkey": "<ctrl>+q",
   "show_exit_button": true,
   "debug": false,

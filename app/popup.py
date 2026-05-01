@@ -39,6 +39,13 @@ class TranslationPopup:
         self.root = root
         self.font_size = int(config.get("popup_font_size", 14))
         self.auto_close_ms = int(config.get("popup_auto_close_ms", 15000))
+        ox = int(config.get("popup_mouse_offset_x", 0))
+        if "popup_mouse_offset_y" in config:
+            oy = int(config["popup_mouse_offset_y"])
+        else:
+            oy = int(config.get("popup_mouse_gap_px", 20))
+        self._mouse_offset_x = max(-2000, min(2000, ox))
+        self._mouse_offset_y = max(-2000, min(2000, oy))
 
         accent = config.get("popup_accent_color", _DEFAULT_ACCENT)
         bg_col = config.get("popup_bg_color", _DEFAULT_BG)
@@ -168,8 +175,8 @@ class TranslationPopup:
         sw = self.win.winfo_screenwidth()
         sh = self.win.winfo_screenheight()
 
-        x = cx - w // 2
-        y = cy + 20
+        x = cx - w // 2 + self._mouse_offset_x
+        y = cy + self._mouse_offset_y
 
         x = max(8, min(x, sw - w - 8))
         y = max(8, min(y, sh - h - 8))

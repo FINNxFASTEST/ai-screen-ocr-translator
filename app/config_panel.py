@@ -28,6 +28,9 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 _SHORTCUT_VALUE_FG = "#1a1a1a"
 _SHORTCUT_MUTED_FG = "#666666"
 
+# Space after fixed-width labels before the next control (Spinbox, Entry, Combobox, shortcut text).
+_SETTINGS_ROW_LABEL_GAP = (0, 12)
+
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
     ("Left mouse button", "left_click"),
@@ -258,7 +261,7 @@ class ConfigPanel(tk.Toplevel):
     def _color_picker_row(self, parent, label: str, var: tk.StringVar):
         fr = tk.Frame(parent)
         fr.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT)
+        tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
         ent = tk.Entry(fr, textvariable=var)
         ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
@@ -282,7 +285,10 @@ class ConfigPanel(tk.Toplevel):
 
         shape_row = tk.Frame(tab)
         shape_row.pack(fill=tk.X, pady=(0, 8))
-        tk.Label(shape_row, text="Lens shape:", width=18, anchor="w").pack(side=tk.LEFT)
+        tk.Label(shape_row, text="Lens shape:", width=18, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         ls = str(self._data.get("lens_shape", "circle")).strip().lower()
         if ls not in ("circle", "square"):
             ls = "circle"
@@ -391,13 +397,16 @@ class ConfigPanel(tk.Toplevel):
 
         row = tk.Frame(gf)
         row.pack(fill=tk.X, padx=8, pady=4)
-        tk.Label(row, text="Font size:", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row, text="Font size:", width=14, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
         self.var_popup_font = tk.IntVar(value=int(self._data.get("popup_font_size", 14)))
         tk.Spinbox(row, from_=8, to=32, textvariable=self.var_popup_font, width=8).pack(side=tk.LEFT)
 
         row2 = tk.Frame(gf)
         row2.pack(fill=tk.X, padx=8, pady=4)
-        tk.Label(row2, text="Auto-close (ms):", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row2, text="Auto-close (ms):", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         self.var_popup_close = tk.IntVar(value=int(self._data.get("popup_auto_close_ms", 15000)))
         tk.Spinbox(row2, from_=1000, to=600000, increment=500, textvariable=self.var_popup_close, width=10).pack(
             side=tk.LEFT
@@ -405,24 +414,81 @@ class ConfigPanel(tk.Toplevel):
 
         row3 = tk.Frame(gf)
         row3.pack(fill=tk.X, padx=8, pady=8)
-        tk.Label(row3, text="Max text width:", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row3, text="Max text width:", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         self.var_popup_maxw = tk.IntVar(value=int(self._data.get("popup_max_width", 480)))
         tk.Spinbox(row3, from_=240, to=900, increment=10, textvariable=self.var_popup_maxw, width=8).pack(
             side=tk.LEFT
         )
+
+        _ox0 = int(self._data.get("popup_mouse_offset_x", 0))
+        if "popup_mouse_offset_y" in self._data:
+            _oy0 = int(self._data["popup_mouse_offset_y"])
+        else:
+            _oy0 = int(self._data.get("popup_mouse_gap_px", 20))
+
+        row_ox = tk.Frame(gf)
+        row_ox.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Label(row_ox, text="Mouse offset X (px):", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
+        self.var_popup_mouse_offset_x = tk.IntVar(value=_ox0)
+        tk.Spinbox(
+            row_ox,
+            from_=-2000,
+            to=2000,
+            increment=5,
+            textvariable=self.var_popup_mouse_offset_x,
+            width=8,
+        ).pack(side=tk.LEFT)
+
+        row_oy = tk.Frame(gf)
+        row_oy.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Label(row_oy, text="Mouse offset Y (px):", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
+        self.var_popup_mouse_offset_y = tk.IntVar(value=_oy0)
+        tk.Spinbox(
+            row_oy,
+            from_=-2000,
+            to=2000,
+            increment=5,
+            textvariable=self.var_popup_mouse_offset_y,
+            width=8,
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            gf,
+            text=(
+                "Popup is centered on the cursor horizontally, then shifted by X (negative = left). "
+                "Top edge is placed at cursor row + Y (negative = up; 0 = tight to cursor row)."
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 4))
 
         lay = tk.LabelFrame(tab, text="Layout & rounding")
         lay.pack(fill=tk.X, pady=(8, 0))
 
         row_r = tk.Frame(lay)
         row_r.pack(fill=tk.X, padx=8, pady=6)
-        tk.Label(row_r, text="Corner radius (px):", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row_r, text="Corner radius (px):", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         self.var_popup_border_radius = tk.IntVar(value=int(self._data.get("popup_border_radius", 6)))
         tk.Spinbox(row_r, from_=0, to=48, textvariable=self.var_popup_border_radius, width=8).pack(side=tk.LEFT)
 
         row_outline = tk.Frame(lay)
         row_outline.pack(fill=tk.X, padx=8, pady=(0, 6))
-        tk.Label(row_outline, text="Border line (px):", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row_outline, text="Border line (px):", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         self.var_popup_border_width = tk.IntVar(
             value=int(self._data.get("popup_border_width", 1))
         )
@@ -443,7 +509,10 @@ class ConfigPanel(tk.Toplevel):
 
         row_wb = tk.Frame(lay)
         row_wb.pack(fill=tk.X, padx=8, pady=(0, 8))
-        tk.Label(row_wb, text="Word break:", width=14, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row_wb, text="Word break:", width=14, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         wm = str(self._data.get("popup_wrap_mode", "word")).strip().lower()
         if wm != "char":
             wm = "word"
@@ -501,7 +570,7 @@ class ConfigPanel(tk.Toplevel):
         ):
             fr = tk.Frame(tab)
             fr.pack(fill=tk.X, pady=(0, 6))
-            tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT)
+            tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             tk.Entry(fr, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
@@ -527,7 +596,7 @@ class ConfigPanel(tk.Toplevel):
         self.var_ai_ocr_model = tk.StringVar(value=str(ai.get("model", "")))
         fr = tk.Frame(tab)
         fr.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr, text="Vision model:", width=18, anchor="w").pack(side=tk.LEFT)
+        tk.Label(fr, text="Vision model:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
         tk.Entry(fr, textvariable=self.var_ai_ocr_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         lf = tk.LabelFrame(tab, text="Vision OCR prompt")
@@ -570,7 +639,7 @@ class ConfigPanel(tk.Toplevel):
         for i, (name, var, lo, hi, is_int, inc) in enumerate(specs):
             fr = tk.Frame(tab)
             fr.grid(row=i, column=0, sticky="ew", pady=2)
-            tk.Label(fr, text=name + ":", width=16, anchor="w").pack(side=tk.LEFT)
+            tk.Label(fr, text=name + ":", width=16, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             if is_int:
                 tk.Spinbox(fr, from_=lo, to=hi, textvariable=var, width=12).pack(side=tk.LEFT)
             else:
@@ -621,7 +690,10 @@ class ConfigPanel(tk.Toplevel):
 
         cap_mouse_fr = tk.Frame(hk_fr)
         cap_mouse_fr.pack(fill=tk.X, padx=8, pady=(0, 6))
-        tk.Label(cap_mouse_fr, text="Capture (mouse menu):", width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(cap_mouse_fr, text="Capture (mouse menu):", width=22, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
         self.var_capture_mouse_combo = tk.StringVar()
         self._cb_capture_mouse = ttk.Combobox(
             cap_mouse_fr,
@@ -677,7 +749,7 @@ class ConfigPanel(tk.Toplevel):
 
         fr = tk.Frame(parent)
         fr.pack(fill=tk.X, padx=8, pady=6)
-        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
         cb = ttk.Combobox(fr, values=labels, width=14, state="readonly")
         cb.set(readable[normalize_lens_wheel_mod(token_var.get())])
         cb.pack(side=tk.LEFT)
@@ -765,7 +837,7 @@ class ConfigPanel(tk.Toplevel):
     ) -> None:
         fr = tk.Frame(parent)
         fr.pack(fill=tk.X, padx=8, pady=6)
-        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
         text_lbl = tk.Label(
             fr,
             anchor="w",
@@ -1042,6 +1114,12 @@ class ConfigPanel(tk.Toplevel):
         wbm = self.var_popup_wrap_mode.get().strip().lower()
         if wbm not in ("word", "char"):
             return 'Popup word break must be "word" or "char".'
+        pox = int(self.var_popup_mouse_offset_x.get())
+        poy = int(self.var_popup_mouse_offset_y.get())
+        if pox < -2000 or pox > 2000:
+            return "Popup mouse offset X must be between -2000 and 2000."
+        if poy < -2000 or poy > 2000:
+            return "Popup mouse offset Y must be between -2000 and 2000."
         if not self.var_ai_url.get().strip():
             return "AI base URL cannot be empty."
         tpl = self.txt_translate.get("1.0", "end")
@@ -1113,6 +1191,9 @@ class ConfigPanel(tk.Toplevel):
         d["popup_border_radius"] = int(self.var_popup_border_radius.get())
         d["popup_border_width"] = int(self.var_popup_border_width.get())
         d["popup_wrap_mode"] = self.var_popup_wrap_mode.get().strip().lower()
+        d["popup_mouse_offset_x"] = int(self.var_popup_mouse_offset_x.get())
+        d["popup_mouse_offset_y"] = int(self.var_popup_mouse_offset_y.get())
+        d.pop("popup_mouse_gap_px", None)
 
         d["ai_url"] = self.var_ai_url.get().strip()
         d["model"] = self.var_model.get().strip()
