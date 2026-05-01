@@ -1,5 +1,5 @@
 {
-  "capture_hotkey": "<ctrl>+<delete>",
+  "capture_hotkey": "middle_click",
   "model": "docker.io/ai/gemma3:4B-F16",
   "ai_url": "http://localhost:12434",
   "settings_hotkey": "f12",
@@ -26,7 +26,7 @@
   "popup_border_radius": 6,
   "popup_border_width": 1,
   "popup_wrap_mode": "word",
-  "exit_hotkey": "q",
+  "exit_hotkey": "<ctrl>+q",
   "show_exit_button": true,
   "debug": false,
   "translate": {

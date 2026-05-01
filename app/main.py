@@ -367,11 +367,20 @@ class App:
 
     # --- Mouse ---
 
-    def _on_click(self, x, y, button, pressed):
-        if not pressed or self._capture_mode != "mouse":
+    def _on_click(self, x, y, button, pressed, injected=False):
+        # Synthetic events must pass through (e.g. other apps / automation).
+        if injected:
             return
-        if button == self._capture_button:
+        if self._capture_mode != "mouse":
+            return
+        if button != self._capture_button:
+            return
+        if pressed:
             self.root.after(0, self._trigger)
+        # Swallow press+release so apps (e.g. Chrome middle-click → new tab) never see them.
+        # suppress_event() raises internally; trigger must already be queued above.
+        if bool(self.config.get("capture_suppress_os_click", True)):
+            self._mouse_listener.suppress_event()
 
     # --- Keyboard (exit hotkey) ---
 

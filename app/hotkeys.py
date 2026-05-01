@@ -16,6 +16,14 @@ _SPECIAL_KEYS = {
     "ctrl": (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r),
     "shift": (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift),
     "alt": (keyboard.Key.alt_l, keyboard.Key.alt_r),
+    "win": tuple(
+        k
+        for k in (
+            getattr(keyboard.Key, n, None)
+            for n in ("cmd", "cmd_l", "cmd_r", "win", "win_l", "win_r")
+        )
+        if k is not None
+    ),
     "scroll_lock": (keyboard.Key.scroll_lock,),
     "pause": (keyboard.Key.pause,),
     "caps_lock": (keyboard.Key.caps_lock,),
@@ -87,24 +95,8 @@ def _compose_mods_and_main(mod_bits: list[str], main: str) -> str:
     return "+".join(mod_bits + [main])
 
 
-def tk_key_event_to_hotkey(
-    event: TkEvent,
-    *,
-    use_event_modifiers: bool = True,
-) -> str | None:
-    """Build storage string from a Tk KeyPress; None until a non-modifier key is pressed.
-
-    When use_event_modifiers is False (e.g. capture hotkey), modifiers from event.state
-    are ignored so the stored binding is exactly the non-modifier key (Delete, F12, …).
-    This avoids bogus <ctrl>+ on Windows Tk and matches “single key” capture shortcuts.
-    Chord shortcuts still work when True (default): real Ctrl/Shift/Alt presses are reflected.
-    """
-
-    keysym = (event.keysym or "").strip()
-    ks_num = getattr(event, "keysym_num", None)
-    char = event.char or ""
-
-    modifier_only = {
+TK_MODIFIER_KEYSYMS: frozenset[str] = frozenset(
+    {
         "Shift_L",
         "Shift_R",
         "Control_L",
@@ -115,14 +107,158 @@ def tk_key_event_to_hotkey(
         "Win_R",
         "Meta_L",
         "Meta_R",
+        "Super_L",
+        "Super_R",
     }
-    if keysym in modifier_only:
+)
+
+
+def normalize_modifier_keysym_for_held(raw: str) -> str | None:
+    """Return a lowercase stable id for Tk modifier tracking, or None.
+
+    Windows Tk sometimes uses different casings (`control_l`), names (`ISO_Left_Control`),
+    or synonyms (`Ctrl_L`). Excluded keys must not collide with real keysyms.
+    """
+
+    kl = (raw or "").strip().lower()
+    if not kl:
+        return None
+
+    alias_map: dict[str, str] = {
+        "ctrl_l": "control_l",
+        "ctrl_r": "control_r",
+        "iso_left_control": "control_l",
+        "iso_right_control": "control_r",
+        "apple_l": "meta_l",
+        "apple_r": "meta_r",
+    }
+    kl = alias_map.get(kl, kl)
+
+    if kl.startswith(("control_", "shift_", "alt_", "win_", "meta_", "super_")):
+        return kl
+    if kl in (
+        "shift_l",
+        "shift_r",
+        "control_l",
+        "control_r",
+        "alt_l",
+        "alt_r",
+        "win_l",
+        "win_r",
+        "meta_l",
+        "meta_r",
+        "super_l",
+        "super_r",
+    ):
+        return kl
+    if kl.startswith("iso_") and "control" in kl:
+        return "control_l"
+    return None
+
+
+def tk_held_keysyms_to_modifier_tokens(held: set[str]) -> list[str]:
+    """Map raw Tk modifier keysyms (still held) to ordered <ctrl>/<shift>/<alt>/<win> tokens."""
+    canon: list[str] = []
+    for k in held:
+        n = normalize_modifier_keysym_for_held(k)
+        if n:
+            canon.append(n)
+    has_ctrl = any(c.startswith("control_") for c in canon)
+    has_shift = any(c.startswith("shift_") for c in canon)
+    has_alt = any(c.startswith("alt_") for c in canon)
+    has_win = any(
+        c in ("win_l", "win_r", "meta_l", "meta_r", "super_l", "super_r")
+        or c.startswith("win_")
+        or c.startswith("meta_")
+        or c.startswith("super_")
+        for c in canon
+    )
+    out: list[str] = []
+    if has_ctrl:
+        out.append("<ctrl>")
+    if has_shift:
+        out.append("<shift>")
+    if has_alt:
+        out.append("<alt>")
+    if has_win:
+        out.append("<win>")
+    return out
+
+
+def tk_event_state_to_modifier_tokens(event: TkEvent) -> list[str]:
+    """Modifier bits from Tk KeyPress state (covers Ctrl when physical KeyPress was not delivered)."""
+    try:
+        state = int(event.state or 0)
+    except (TypeError, ValueError):
+        state = 0
+    SHIFT = 0x0001
+    CONTROL = 0x0004
+    ALT_WIN = 0x20000
+    CONTROL_EXT = 0x40000
+    mods: list[str] = []
+    if bool(state & CONTROL) or bool(state & CONTROL_EXT):
+        mods.append("<ctrl>")
+    if bool(state & SHIFT):
+        mods.append("<shift>")
+    if bool(state & ALT_WIN):
+        mods.append("<alt>")
+    return mods
+
+
+_MODIFIER_ORDER = ("<ctrl>", "<shift>", "<alt>", "<win>")
+
+
+def tk_merge_modifier_token_lists(*lists: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for token in _MODIFIER_ORDER:
+        if any(token in lst for lst in lists if lst) and token not in seen:
+            out.append(token)
+            seen.add(token)
+    for lst in lists:
+        for t in lst:
+            if t not in seen:
+                out.append(t)
+                seen.add(t)
+    return out
+
+
+def tk_listen_combine_modifiers(held_keysyms: set[str], event: TkEvent) -> list[str]:
+    """Physical modifier keys + event.state (Windows Tk needs both for reliable Ctrl)."""
+    return tk_merge_modifier_token_lists(
+        tk_held_keysyms_to_modifier_tokens(held_keysyms),
+        tk_event_state_to_modifier_tokens(event),
+    )
+
+
+def tk_key_event_to_hotkey(
+    event: TkEvent,
+    *,
+    modifier_tokens: list[str] | None = None,
+    use_event_modifiers: bool = True,
+) -> str | None:
+    """Build storage string from a Tk KeyPress; None until a non-modifier key is pressed.
+
+    Prefer passing modifier_tokens from KeyPress/KeyRelease tracking (Settings “Listen”).
+    That matches other apps’ recorders and avoids bogus modifier bits from event.state on
+    Windows Tk. If modifier_tokens is None and use_event_modifiers is False, only the main
+    key is stored (legacy). If modifier_tokens is None and use_event_modifiers is True,
+    modifiers are inferred from event.state.
+    """
+
+    keysym = (event.keysym or "").strip()
+    ks_num = getattr(event, "keysym_num", None)
+    char = event.char or ""
+
+    if normalize_modifier_keysym_for_held(keysym) is not None:
         return None
     if keysym == "Escape":
         return None
 
     mods: list[str] = []
-    if use_event_modifiers:
+    if modifier_tokens is not None:
+        mods.extend(modifier_tokens)
+    elif use_event_modifiers:
         try:
             state = int(event.state or 0)
         except (TypeError, ValueError):
@@ -195,6 +331,10 @@ def tk_key_event_to_hotkey(
         if oc >= 32 and oc != 127:
             return finish(char.lower()) if char.isalpha() else finish(char)
 
+    # Ctrl/Alt combos: char is often a control byte (\x01–\x1f); keysym still names the key.
+    if len(keysym) == 1 and keysym.isalnum():
+        return finish(keysym.lower()) if keysym.isalpha() else finish(keysym)
+
     keysym_aliases: dict[str, str] = {
         "comma": ",",
         "period": ".",
@@ -229,7 +369,7 @@ def validate_keyboard_hotkey_string(s: str) -> str | None:
     if not g:
         return (
             'Invalid shortcut. Examples: "f12", "<ctrl>+space", '
-            '"<shift>+<f10>".'
+            '"<ctrl>+<shift>+<alt>+q", "<win>+e".'
         )
     return None
 

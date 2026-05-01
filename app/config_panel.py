@@ -14,7 +14,9 @@ from typing import Callable
 from app.hotkeys import (
     config_capture_trigger_raw,
     normalize_lens_wheel_mod,
+    normalize_modifier_keysym_for_held,
     tk_key_event_to_hotkey,
+    tk_listen_combine_modifiers,
     validate_keyboard_hotkey_string,
 )
 
@@ -648,7 +650,10 @@ class ConfigPanel(tk.Toplevel):
 
         tk.Label(
             tab,
-            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels without changing.",
+            text=(
+                "Listen opens a grab window: hold Ctrl/Shift/Alt/Win as needed, then press the final key. "
+                "Escape cancels without changing."
+            ),
             fg="#555",
             wraplength=520,
             justify=tk.LEFT,
@@ -808,11 +813,12 @@ class ConfigPanel(tk.Toplevel):
         on_capture: _ListenCb,
         *,
         current_display: str,
-        use_event_modifiers: bool = True,
     ) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(title)
         dlg.resizable(False, False)
+        held_modifiers: set[str] = set()
+
         # Two-value -pady on tk.Label is rejected on some Windows Tk builds; use pack(pady=…) instead.
         tk.Label(dlg, text="Current shortcut", fg="#666").pack(padx=24, pady=(16, 4))
         tk.Label(
@@ -823,18 +829,13 @@ class ConfigPanel(tk.Toplevel):
         ).pack(padx=24, pady=(0, 14))
         tk.Label(
             dlg,
-            text="Press a new shortcut to replace it.\nEscape closes without changing.",
+            text=(
+                "Hold Ctrl / Shift / Alt / Win, then press the final key "
+                "(same idea as Discord, VS Code, etc.).\nEscape cancels."
+            ),
             justify=tk.CENTER,
-            wraplength=360,
+            wraplength=380,
         ).pack(padx=24, pady=(0, 10))
-        if not use_event_modifiers:
-            tk.Label(
-                dlg,
-                text="Capture uses the key alone (no Ctrl/Alt/Shift added by the recorder).",
-                fg="#555",
-                justify=tk.CENTER,
-                wraplength=380,
-            ).pack(padx=20, pady=(0, 8))
         tk.Label(dlg, text="Keys are read in this window only.", fg="#777").pack(padx=16, pady=(0, 12))
 
         def close() -> None:
@@ -847,16 +848,30 @@ class ConfigPanel(tk.Toplevel):
             except tk.TclError:
                 pass
 
-        def on_key(event: tk.Event) -> None:
-            if event.keysym == "Escape":
+        def on_key_release(event: tk.Event) -> None:
+            n = normalize_modifier_keysym_for_held((event.keysym or "").strip())
+            if n:
+                held_modifiers.discard(n)
+
+        def on_key_press(event: tk.Event) -> None:
+            ks = (event.keysym or "").strip()
+            if ks == "Escape":
                 close()
                 return
-            hk = tk_key_event_to_hotkey(event, use_event_modifiers=use_event_modifiers)
+            # Track physical modifiers; normalize fixes Windows casings (e.g. control_l).
+            mod_id = normalize_modifier_keysym_for_held(ks)
+            if mod_id is not None:
+                held_modifiers.add(mod_id)
+                return
+            # Physical set + event.state: Tk often omits Ctrl in held but sets state bits.
+            mod_tokens = tk_listen_combine_modifiers(held_modifiers, event)
+            hk = tk_key_event_to_hotkey(event, modifier_tokens=mod_tokens)
             if hk:
                 on_capture(hk)
                 close()
 
-        dlg.bind("<KeyPress>", on_key)
+        dlg.bind("<KeyPress>", on_key_press)
+        dlg.bind("<KeyRelease>", on_key_release)
         dlg.protocol("WM_DELETE_WINDOW", close)
         dlg.transient(self)
         dlg.after(80, dlg.grab_set)
@@ -907,7 +922,6 @@ class ConfigPanel(tk.Toplevel):
             "Record capture shortcut",
             apply,
             current_display=self._capture_listen_hint(),
-            use_event_modifiers=False,
         )
 
     def _listen_exit_hotkey(self) -> None:
