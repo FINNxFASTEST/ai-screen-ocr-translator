@@ -24,7 +24,8 @@ def extract_text_olm(
 ) -> str:
     """Extract text via olmOCR or another configured multimodal endpoint."""
     cfg = ocr_config or {}
-    debug = bool(olm_cfg.get("debug", False)) or bool(cfg.get("debug", False))
+    # Only `olm_ocr.debug` controls olm dump files (see `ai_ocr.py` — `ocr.debug` is Paddle-only).
+    debug = bool(olm_cfg.get("debug", False))
     tag = datetime.now().strftime("%H%M%S_%f")[:9] if debug else ""
 
     if debug:

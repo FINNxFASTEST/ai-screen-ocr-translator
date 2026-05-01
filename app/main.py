@@ -509,7 +509,7 @@ class App:
                 original = extract_text_ai(
                     image,
                     ai_ocr_cfg,
-                    self.config.get("ocr"),
+                    ocr_cfg,
                     self.config,
                 )
             elif engine == "olm_ocr":
@@ -521,7 +521,7 @@ class App:
                 olm_model = olm_cfg.get("model", "allenai/olmOCR-2-7B-1025")
                 label = f"olmOCR / {olm_model}" if debug else "olmOCR"
                 spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
-                original = extract_text_olm(image, olm_cfg, self.config.get("ocr"), pipe_cfg)
+                original = extract_text_olm(image, olm_cfg, ocr_cfg, pipe_cfg)
             else:
                 spinner.update("Reading text ... [PaddleOCR]" if debug else "Reading text ...")
                 original = extract_text(image, ocr_cfg)
@@ -869,7 +869,32 @@ class App:
         except tk.TclError:
             pass
 
+    def _persist_lens_geometry(self) -> None:
+        """Write current lens width/height/radius so resize survives restart."""
+        path = effective_config_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            data = dict(self.config)
+        lw = int(self.lens.lens_width)
+        lh = int(self.lens.lens_height)
+        lr = int(self.lens.radius)
+        data["lens_width"] = lw
+        data["lens_height"] = lh
+        data["lens_radius"] = lr
+        self.config["lens_width"] = lw
+        self.config["lens_height"] = lh
+        self.config["lens_radius"] = lr
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"[Lens] Could not save size to config: {e}")
+
     def _quit(self):
+        self._persist_lens_geometry()
         self._mouse_listener.stop()
         self._kb_listener.stop()
         self.root.quit()

@@ -24,7 +24,8 @@ def extract_text_ai(
 ) -> str:
     """Extract text from image using configured vision backend (Docker, OpenAI, Anthropic, etc.)."""
     cfg = ocr_config or {}
-    debug = bool(ai_ocr_config.get("debug", False)) or bool(cfg.get("debug", False))
+    # Only `ai_ocr.debug` controls AI Vision dump files (OCR-tab `ocr.debug` is for PaddleOCR).
+    debug = bool(ai_ocr_config.get("debug", False))
     tag = datetime.now().strftime("%H%M%S_%f")[:9] if debug else ""
 
     if debug:

@@ -53,7 +53,7 @@
     "integration": {
       "provider": "inherit"
     },
-    "enabled": false,
+    "enabled": true,
     "model": "docker.io/ai/gemma4:E2B",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
@@ -68,7 +68,7 @@
     "debug": false
   },
   "ocr": {
-    "engine": "paddleocr",
+    "engine": "ai_vision",
     "upscale": 2,
     "contrast": 1.0,
     "sharpness": 1.0,
@@ -86,5 +86,5 @@
     "top_k": 3,
     "min_source_chars_for_hints": 64
   },
-  "setup_done": true
+  "setup_done": false
 }

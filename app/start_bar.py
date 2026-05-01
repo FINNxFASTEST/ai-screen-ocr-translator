@@ -5,8 +5,14 @@ import threading
 import tkinter as tk
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
-REQ_FILE = Path(__file__).resolve().parents[1] / "requirements.txt"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+CONFIG_USER_PATH = _REPO_ROOT / "config.user.json"
+CONFIG_DEFAULT_PATH = _REPO_ROOT / "config.default.json"
+CONFIG_LEGACY_PATH = _REPO_ROOT / "config.json"
+REQ_FILE = _REPO_ROOT / "requirements.txt"
+
+# Pulled on first-run wizard (same image serves translation + AI Vision OCR on Docker Model Runner)
+SETUP_DOCKER_MODEL = "docker.io/ai/gemma4:E2B"
 
 BG = "#1a1a1a"
 BG2 = "#242424"
@@ -21,28 +27,36 @@ PENDING_COLOR = "#555555"
 
 _STEPS = [
     ("packages", "Install Python packages"),
-    ("model_trans", "Pull translation model  (gemma4:E2B)"),
+    ("model_trans", "Pull Docker model  (gemma4:E2B — translate + OCR)"),
     ("ready", "Ready to launch"),
 ]
 
 
+def _load_effective_config() -> dict:
+    """Same resolution order as app.main.load_config — first existing file wins."""
+    for path in (CONFIG_USER_PATH, CONFIG_DEFAULT_PATH, CONFIG_LEGACY_PATH):
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+    return {}
+
+
 def is_first_run() -> bool:
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            return not json.load(f).get("setup_done", False)
+        return not _load_effective_config().get("setup_done", False)
     except Exception:
         return True
 
 
 def mark_setup_done() -> None:
+    """Persist setup_done on config.user.json (full copy if wizard ran against default only)."""
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg = json.load(f)
+        cfg = _load_effective_config()
         cfg["setup_done"] = True
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(CONFIG_USER_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as exc:
-        print(f"[setup] Could not update config.json: {exc}")
+        print(f"[setup] Could not update config.user.json: {exc}")
 
 
 class StartBar:
@@ -196,10 +210,10 @@ class StartBar:
 
         # ── 2. Docker model ──────────────────────────────────────────────
         self._set_step("model_trans", "busy")
-        self._set_status("Pulling translation model…")
-        self._log_line("▸ docker model pull docker.io/ai/gemma4:E2B")
+        self._set_status("Pulling Docker model (translate + vision OCR)…")
+        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL}")
         docker_ok = self._run_cmd(
-            ["docker", "model", "pull", "docker.io/ai/gemma4:E2B"],
+            ["docker", "model", "pull", SETUP_DOCKER_MODEL],
             label="docker",
         )
         if docker_ok:
