@@ -1,4 +1,4 @@
-import requests
+from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, ResolvedEndpoint, chat_complete
 
 _MAX_SERIES_CONTEXT_CHARS = 12000
 _MAX_HINT_SOURCE_CHARS = 180
@@ -27,8 +27,7 @@ def _ellipsize(s: str, max_chars: int) -> str:
 
 def translate(
     text: str,
-    ai_url: str,
-    model: str,
+    endpoint: ResolvedEndpoint,
     prompt_template: str = "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
     context: str = "",
     memory_pairs: list[tuple[str, str]] | None = None,
@@ -68,20 +67,15 @@ def translate(
         messages.append({"role": "user", "content": prompt})
         timeout = 60
 
-    try:
-        response = requests.post(
-            f"{ai_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": messages,
-            },
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
-    except requests.exceptions.ConnectionError:
-        return "[Error: Docker Model Runner not running]"
-    except requests.exceptions.Timeout:
-        return "[Error: Translation timed out]"
-    except Exception as e:
-        return f"[Error: {e}]"
+    out = chat_complete(endpoint, messages, timeout=timeout)
+    if out.startswith("[Error:"):
+        low = out.lower()
+        if endpoint.provider == PROVIDER_DOCKER and (
+            "not reachable" in low or "connection" in low
+        ):
+            return "[Error: Docker Model Runner not running]"
+        if endpoint.provider == PROVIDER_OLLAMA and (
+            "not reachable" in low or "connection" in low
+        ):
+            return "[Error: Ollama not reachable — run ollama serve or check http://localhost:11434]"
+    return out

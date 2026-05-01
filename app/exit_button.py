@@ -29,7 +29,7 @@ class ExitButton:
         self,
         root: tk.Tk,
         on_exit,
-        ai_url: str = "http://localhost:12434",
+        config: dict | None = None,
         settings_command=None,
         *,
         quick_translate: bool = False,
@@ -37,7 +37,8 @@ class ExitButton:
     ):
         self.root = root
         self.on_exit = on_exit
-        self.ai_url = ai_url
+        self._config = config
+        self.ai_url = (config or {}).get("ai_url", "http://localhost:12434")
         self._on_quick_translate_change = on_quick_translate_change
 
         self.win = tk.Toplevel(root)
@@ -202,11 +203,20 @@ class ExitButton:
 
     def _ping(self):
         try:
-            resp = requests.get(f"{self.ai_url}/v1/models", timeout=5)
-            resp.raise_for_status()
-            models = [m["id"] for m in resp.json().get("data", [])]
-            label = f"OK  ({len(models)} model{'s' if len(models) != 1 else ''})"
-            self.root.after(0, self._set_status, label, STATUS_OK)
+            if self._config is not None:
+                from app.ai_integration import ping_translate, resolve_translate
+
+                ok, detail = ping_translate(resolve_translate(self._config))
+                if ok:
+                    self.root.after(0, self._set_status, detail or "OK", STATUS_OK)
+                else:
+                    self.root.after(0, self._set_status, detail[:160], STATUS_ERR)
+            else:
+                resp = requests.get(f"{self.ai_url}/v1/models", timeout=5)
+                resp.raise_for_status()
+                models = [m["id"] for m in resp.json().get("data", [])]
+                label = f"OK  ({len(models)} model{'s' if len(models) != 1 else ''})"
+                self.root.after(0, self._set_status, label, STATUS_OK)
         except requests.exceptions.ConnectionError:
             self.root.after(0, self._set_status, "Cannot connect", STATUS_ERR)
         except requests.exceptions.Timeout:
@@ -218,6 +228,11 @@ class ExitButton:
 
     def _set_status(self, text: str, color: str):
         self.status_label.config(text=text, fg=color)
+
+    def set_config(self, cfg: dict) -> None:
+        """Refresh resolved endpoint for Test Connection + fallback URL."""
+        self._config = cfg
+        self.ai_url = str(cfg.get("ai_url") or self.ai_url)
 
     def set_ai_url(self, url: str):
         self.ai_url = url

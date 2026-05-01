@@ -33,6 +33,9 @@
   "show_exit_button": true,
   "debug": false,
   "translate": {
+    "integration": {
+      "provider": "docker_local"
+    },
     "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
     "quick_translate": false,
     "active_series": "default",
@@ -47,12 +50,18 @@
     }
   },
   "ai_ocr": {
+    "integration": {
+      "provider": "inherit"
+    },
     "enabled": false,
     "model": "docker.io/ai/gemma3:4B-F16",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
   },
   "olm_ocr": {
+    "integration": {
+      "provider": "openai_compat"
+    },
     "url": "http://localhost:8000",
     "model": "allenai/olmOCR-2-7B-1025",
     "prompt": "Return the plain text shown in this image exactly as written. Do not add explanations, headers, or formatting.",

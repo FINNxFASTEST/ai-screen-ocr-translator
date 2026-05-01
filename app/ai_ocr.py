@@ -1,10 +1,9 @@
-import base64
 import io
 from datetime import datetime
 
-import requests
 from PIL import Image
 
+from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, resolve_ai_ocr, vision_chat
 from app.ocr_engine import _preprocess, _save_debug
 
 _DEFAULTS = {
@@ -20,10 +19,10 @@ _DEFAULTS = {
 def extract_text_ai(
     image: Image.Image,
     ai_ocr_config: dict,
-    ocr_config: dict | None = None,
-    ai_url: str = "http://localhost:12434",
+    ocr_config: dict | None,
+    config: dict,
 ) -> str:
-    """Extract text from image using Docker Model Runner vision model."""
+    """Extract text from image using configured vision backend (Docker, OpenAI, Anthropic, etc.)."""
     cfg = ocr_config or {}
     debug = bool(ai_ocr_config.get("debug", False)) or bool(cfg.get("debug", False))
     tag = datetime.now().strftime("%H%M%S_%f")[:9] if debug else ""
@@ -38,40 +37,16 @@ def extract_text_ai(
 
     buf = io.BytesIO()
     processed.save(buf, format="PNG")
-    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    png_bytes = buf.getvalue()
 
-    model = ai_ocr_config.get("model", _DEFAULTS["model"])
+    ep = resolve_ai_ocr(config)
     prompt = ai_ocr_config.get("prompt", _DEFAULTS["prompt"])
 
-    try:
-        resp = requests.post(
-            f"{ai_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                        ],
-                    }
-                ],
-            },
-            timeout=60,
-        )
-        if not resp.ok:
-            try:
-                body = resp.json()
-                err = body.get("error") or body
-                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            except Exception:
-                msg = resp.text.strip() or resp.reason
-            return f"[Error: AI-OCR {resp.status_code}: {msg}]"
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except requests.exceptions.ConnectionError:
-        return "[Error: Docker Model Runner not running]"
-    except requests.exceptions.Timeout:
-        return "[Error: AI-OCR timed out]"
-    except Exception as e:
-        return f"[Error: {e}]"
+    err = vision_chat(ep, prompt=prompt, image_png_bytes=png_bytes, timeout=60)
+    if err.startswith("[Error:"):
+        low = err.lower()
+        if ep.provider == PROVIDER_DOCKER and "not reachable" in low:
+            return "[Error: Docker Model Runner not running]"
+        if ep.provider == PROVIDER_OLLAMA and "not reachable" in low:
+            return "[Error: Ollama not reachable — run ollama serve or check http://localhost:11434]"
+    return err

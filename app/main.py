@@ -24,6 +24,7 @@ from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.translator import translate
 from app.memory import MemoryStore, semantic_hints_for_translate
+from app.ai_integration import resolve_translate
 from app.series_config import (
     append_translate_text_correction,
     apply_text_corrections,
@@ -205,7 +206,7 @@ class App:
                 self._exit_btn = ExitButton(
                     self.root,
                     self._quit,
-                    ai_url=self.config.get("ai_url", "http://localhost:12434"),
+                    config=self.config,
                     settings_command=lambda: self.root.after(0, self._open_settings),
                     quick_translate=bool(
                         (self.config.get("translate") or {}).get(
@@ -306,7 +307,7 @@ class App:
             self._reload_hotkeys()
             self._sync_exit_button()
             if self._exit_btn is not None:
-                self._exit_btn.set_ai_url(new_cfg.get("ai_url", "http://localhost:12434"))
+                self._exit_btn.set_config(new_cfg)
                 self._exit_btn.set_quick_translate(
                     bool((new_cfg.get("translate") or {}).get("quick_translate", False))
                 )
@@ -433,7 +434,7 @@ class App:
             self.root.after(0, lambda: self.lens.set_loading(True))
 
             ai_ocr_cfg = self.config.get("ai_ocr", {})
-            ai_url = self.config.get("ai_url", "http://localhost:12434")
+            tr_endpoint = resolve_translate(self.config)
             model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
 
             ocr_root = self.config.get("ocr") or {}
@@ -457,16 +458,18 @@ class App:
                     image,
                     ai_ocr_cfg,
                     self.config.get("ocr"),
-                    ai_url,
+                    self.config,
                 )
             elif engine == "olm_ocr":
                 olm_cfg = dict(self.config.get("olm_ocr") or {})
                 if merge_legacy_olm_local:
                     olm_cfg = {**(self.config.get("olmocr_local") or {}), **olm_cfg}
+                pipe_cfg = dict(self.config)
+                pipe_cfg["olm_ocr"] = olm_cfg
                 olm_model = olm_cfg.get("model", "allenai/olmOCR-2-7B-1025")
                 label = f"olmOCR / {olm_model}" if debug else "olmOCR"
                 spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
-                original = extract_text_olm(image, olm_cfg, self.config.get("ocr"), ai_url)
+                original = extract_text_olm(image, olm_cfg, self.config.get("ocr"), pipe_cfg)
             else:
                 spinner.update("Reading text ... [PaddleOCR]" if debug else "Reading text ...")
                 original = extract_text(image, ocr_cfg)
@@ -527,8 +530,7 @@ class App:
             else:
                 translated = translate(
                     original,
-                    ai_url,
-                    model,
+                    tr_endpoint,
                     prompt_template,
                     "" if quick else context,
                     None if quick else memory_pairs,
@@ -675,6 +677,7 @@ class App:
         spinner = Spinner()
         debug = bool(self.config.get("debug", False))
         model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
+        tr_endpoint = resolve_translate(self.config)
         t0 = time.perf_counter()
         try:
             spinner.start("Re-translating ...")
@@ -685,7 +688,6 @@ class App:
                 "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
             )
             _, context = get_active_series_translation(self.config)
-            ai_url = self.config.get("ai_url", "http://localhost:12434")
             prof = get_series_profile(self.config, series_key)
             original = apply_text_corrections(original.strip(), prof)
 
@@ -722,8 +724,7 @@ class App:
                     spinner.update("Re-translating ... [quick]")
                 translated = translate(
                     original,
-                    ai_url,
-                    model,
+                    tr_endpoint,
                     prompt_template,
                     "" if quick else context,
                     None if quick else memory_pairs,
