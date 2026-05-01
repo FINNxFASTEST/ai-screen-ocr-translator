@@ -14,7 +14,7 @@
     "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}"
   },
   "ai_ocr": {
-    "enabled": true,
+    "enabled": false,
     "model": "docker.io/ai/gemma3n:2B-F16",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
