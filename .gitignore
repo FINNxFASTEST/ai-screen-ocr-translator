@@ -19,6 +19,7 @@ debug/
 # Local agent instructions
 CLAUDE.md
 
-# Per-machine settings (effective config overrides; see config.default.json)
+# Per-machine / local overrides (effective config order: config.user.json → config.default.json → config.json)
 config.user.json
+config.json
 
