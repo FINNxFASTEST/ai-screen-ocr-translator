@@ -8,7 +8,8 @@ from PIL import Image
 from app.ocr_engine import _preprocess, _save_debug
 
 _DEFAULTS = {
-    "model": "docker.io/ai/gemma3n:2B-F16",
+    # Docker `gemma3n` artifacts are text-only (no mmproj); use `gemma3` for vision.
+    "model": "docker.io/ai/gemma3:4B-F16",
     "prompt": (
         "Extract all text from this image exactly as it appears. "
         "Reply with only the extracted text, no explanations, no formatting."
@@ -57,7 +58,14 @@ def extract_text_ai(
             },
             timeout=60,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            try:
+                body = resp.json()
+                err = body.get("error") or body
+                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            except Exception:
+                msg = resp.text.strip() or resp.reason
+            return f"[Error: AI-OCR {resp.status_code}: {msg}]"
         return resp.json()["choices"][0]["message"]["content"].strip()
     except requests.exceptions.ConnectionError:
         return "[Error: Docker Model Runner not running]"

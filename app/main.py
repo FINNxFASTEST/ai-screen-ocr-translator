@@ -389,7 +389,7 @@ class App:
             model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
 
             if ai_ocr_cfg.get("enabled", False):
-                ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma3n:2B-F16")
+                ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma3:4B-F16")
                 spinner.update(f"Reading text ... [{ai_model}]" if debug else "Reading text ...")
                 original = extract_text_ai(
                     image,

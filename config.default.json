@@ -47,7 +47,7 @@
   },
   "ai_ocr": {
     "enabled": false,
-    "model": "docker.io/ai/gemma3n:2B-F16",
+    "model": "docker.io/ai/gemma3:4B-F16",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
   },

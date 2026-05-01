@@ -9,4 +9,4 @@ services:
     provider:
       type: model
       options:
-        model: ${OCR_MODEL:-docker.io/ai/gemma3n:2B-F16}
+        model: ${OCR_MODEL:-docker.io/ai/gemma3:4B-F16}

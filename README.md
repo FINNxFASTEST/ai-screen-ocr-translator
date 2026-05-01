@@ -25,8 +25,9 @@ You can pull models manually:
 
 ```bash
 docker model pull docker.io/ai/gemma3:4B-F16
-docker model pull docker.io/ai/gemma3n:2B-F16
 ```
+
+Vision OCR (AI OCR in settings) uses the same **Gemma 3** family: Docker’s `gemma3n` Hub images are **text-only** (no multimodal projector). For image input, keep `ai_ocr.model` on a **`docker.io/ai/gemma3:…`** variant (for example `4B-F16` or `4B-Q4_K_M`).
 
 Or use the helper script:
 
@@ -72,7 +73,7 @@ python main.py
   "exit_hotkey": "<ctrl>+<shift>+<alt>+q",
   "ai_ocr": {
     "enabled": true,
-    "model": "docker.io/ai/gemma3n:2B-F16"
+    "model": "docker.io/ai/gemma3:4B-F16"
   }
 }
 ```
