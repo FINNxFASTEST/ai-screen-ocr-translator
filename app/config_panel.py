@@ -20,6 +20,7 @@ from app.series_config import (
     reading_pick_to_series_key,
     slugify_series_key,
 )
+from app.lens import MAX_RADIUS, MIN_RADIUS
 from app.hotkeys import (
     config_capture_trigger_raw,
     normalize_lens_wheel_mod,
@@ -185,14 +186,11 @@ class ConfigPanel(tk.Toplevel):
         root: tk.Tk,
         initial: dict,
         on_save: Callable[[dict], None],
-        *,
-        panel_mode: str = "full",
     ):
         super().__init__(root)
         self._on_save = on_save
         self._data = copy.deepcopy(initial)
         migrate_translate_to_profiles(self._data.setdefault("translate", {}))
-        self._lens_only = panel_mode == "lens_only"
         self._series_pick_suppress = 0
 
         self.resizable(True, True)
@@ -205,53 +203,41 @@ class ConfigPanel(tk.Toplevel):
         viewport = tk.Frame(self)
         viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=0, pady=(8, 0))
 
-        if self._lens_only:
-            self.title("Manga Translator — Lens")
-            self.minsize(480, 440)
-            inner, _canvas = self._scroll_viewport(viewport)
-            padded = tk.Frame(inner, padx=12, pady=(4, 12))
-            padded.pack(fill=tk.BOTH, expand=True)
-            self._populate_lens_form(padded)
-        else:
-            self.title("Manga Translator — Settings")
-            self.minsize(520, 480)
+        self.title("Manga Translator — Settings")
+        self.minsize(520, 480)
 
-            inner, scroll_canvas = self._scroll_viewport(viewport)
-            nb = ttk.Notebook(inner)
+        inner, scroll_canvas = self._scroll_viewport(viewport)
+        nb = ttk.Notebook(inner)
 
-            def _notebook_scroll_sync(_evt=None) -> None:
-                inner.update_idletasks()
-                try:
-                    box = scroll_canvas.bbox("all")
-                    if box:
-                        scroll_canvas.configure(scrollregion=box)
-                except tk.TclError:
-                    pass
-                scroll_canvas.yview_moveto(0)
+        def _notebook_scroll_sync(_evt=None) -> None:
+            inner.update_idletasks()
+            try:
+                box = scroll_canvas.bbox("all")
+                if box:
+                    scroll_canvas.configure(scrollregion=box)
+            except tk.TclError:
+                pass
+            scroll_canvas.yview_moveto(0)
 
-            nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
+        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
 
-            self._tab_general(nb)
-            self._tab_ai(nb)
-            self._tab_lens(nb)
-            self._tab_popup(nb)
-            self._tab_ai_ocr(nb)
-            self._tab_easyocr(nb)
+        self._tab_general(nb)
+        self._tab_ai(nb)
+        self._tab_lens(nb)
+        self._tab_popup(nb)
+        self._tab_ai_ocr(nb)
+        self._tab_easyocr(nb)
 
-            nb.bind("<<NotebookTabChanged>>", _notebook_scroll_sync)
-            self.after(150, _notebook_scroll_sync)
+        nb.bind("<<NotebookTabChanged>>", _notebook_scroll_sync)
+        self.after(150, _notebook_scroll_sync)
 
         # Do NOT transient() to withdrawn root Tk() — prevents mapping on some Windows setups.
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.update_idletasks()
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        if self._lens_only:
-            w = min(580, sw - 48)
-            h = min(620, sh - 80)
-        else:
-            w = min(640, sw - 48)
-            h = min(620, sh - 80)
+        w = min(640, sw - 48)
+        h = min(620, sh - 80)
         x = (sw - w) // 2
         y = (sh - h) // 2
         self.geometry(f"{int(w)}x{int(h)}+{x}+{y}")
@@ -323,8 +309,8 @@ class ConfigPanel(tk.Toplevel):
             self._lens_wh_fr,
             variable=self.var_lens_width,
             orient=tk.HORIZONTAL,
-            from_=100,
-            to=800,
+            from_=MIN_RADIUS * 2,
+            to=MAX_RADIUS * 2,
             resolution=10,
             length=400,
         ).pack(fill=tk.X, padx=8, pady=4)
@@ -333,8 +319,8 @@ class ConfigPanel(tk.Toplevel):
             self._lens_wh_fr,
             variable=self.var_lens_height,
             orient=tk.HORIZONTAL,
-            from_=100,
-            to=800,
+            from_=MIN_RADIUS * 2,
+            to=MAX_RADIUS * 2,
             resolution=10,
             length=400,
         ).pack(fill=tk.X, padx=8, pady=(4, 8))
@@ -375,9 +361,6 @@ class ConfigPanel(tk.Toplevel):
             resolution=0.05,
             length=400,
         ).pack(fill=tk.X, padx=8, pady=8)
-
-        if self._lens_only:
-            self._build_lens_resize_hotkeys_ui(tab)
 
         tk.Label(
             tab,
@@ -1139,9 +1122,6 @@ class ConfigPanel(tk.Toplevel):
 
         self.var_exit_hotkey = tk.StringVar(value=str(self._data.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")))
         self.var_settings_hotkey = tk.StringVar(value=str(self._data.get("settings_hotkey", "f12")))
-        self.var_lens_settings_hotkey = tk.StringVar(
-            value=str(self._data.get("lens_settings_hotkey", "f11")),
-        )
 
         self.var_capture_hotkey = tk.StringVar(value=config_capture_trigger_raw(self._data))
 
@@ -1183,7 +1163,6 @@ class ConfigPanel(tk.Toplevel):
         ).pack(anchor="w", padx=8, pady=(0, 6))
 
         self._shortcut_listen_row(hk_fr, "Quit translator:", self.var_exit_hotkey, self._listen_exit_hotkey)
-        self._shortcut_listen_row(hk_fr, "Quick Lens settings:", self.var_lens_settings_hotkey, self._listen_lens_settings_hotkey)
         self._shortcut_listen_row(hk_fr, "Open Settings:", self.var_settings_hotkey, self._listen_settings_hotkey)
 
         self._build_lens_resize_hotkeys_ui(tab)
@@ -1484,16 +1463,6 @@ class ConfigPanel(tk.Toplevel):
             current_display=self._shortcut_listen_hint(self.var_settings_hotkey.get()),
         )
 
-    def _listen_lens_settings_hotkey(self) -> None:
-        def apply(hk: str) -> None:
-            self.var_lens_settings_hotkey.set(hk.strip())
-
-        self._open_key_listen_dialog(
-            "Record quick Lens-settings shortcut",
-            apply,
-            current_display=self._shortcut_listen_hint(self.var_lens_settings_hotkey.get()),
-        )
-
     def _listen_lens_hk_resize_w(self) -> None:
         def apply(hk: str) -> None:
             self.var_lens_hk_resize_w.set(hk.strip())
@@ -1567,9 +1536,6 @@ class ConfigPanel(tk.Toplevel):
         if wwm == whm:
             return "Lens mouse wheel: choose two different modifiers for width and height (e.g. Alt and Shift)."
 
-        if self._lens_only:
-            return None
-
         op = float(self.var_popup_opacity.get())
         if op < 0.25 or op > 1.0:
             return "Popup opacity must be between 0.25 and 1.0."
@@ -1602,12 +1568,6 @@ class ConfigPanel(tk.Toplevel):
         sh = validate_keyboard_hotkey_string(sh_raw)
         if sh:
             return f"Settings shortcut: {sh}"
-        lsh_raw = self.var_lens_settings_hotkey.get().strip()
-        if not lsh_raw:
-            return "Quick Lens-settings shortcut missing — use Listen to set it."
-        lsh = validate_keyboard_hotkey_string(lsh_raw)
-        if lsh:
-            return f"Lens settings shortcut: {lsh}"
         cap = self.var_capture_hotkey.get().strip()
         if not cap:
             return "Capture trigger missing — use Listen or pick a mouse button."
@@ -1624,7 +1584,7 @@ class ConfigPanel(tk.Toplevel):
         lh = int(self.var_lens_height.get())
         d["lens_width"] = lw
         d["lens_height"] = lh
-        d["lens_radius"] = max(50, min(400, max(lw, lh) // 2))
+        d["lens_radius"] = max(MIN_RADIUS, min(MAX_RADIUS, max(lw, lh) // 2))
         d["lens_color"] = self.var_lens_color.get().strip()
         d["lens_border_width"] = int(self.var_lens_border.get())
         d["lens_opacity"] = float(self.var_lens_opacity.get())
@@ -1644,10 +1604,6 @@ class ConfigPanel(tk.Toplevel):
         d = copy.deepcopy(self._data)
 
         self._merge_lens_into_config(d)
-        if self._lens_only:
-            if str(d.get("capture_hotkey") or "").strip():
-                d.pop("hotkey", None)
-            return d
 
         d["popup_font_size"] = int(self.var_popup_font.get())
         d["popup_auto_close_ms"] = int(self.var_popup_close.get())
@@ -1715,7 +1671,7 @@ class ConfigPanel(tk.Toplevel):
         d.pop("block_desktop_opacity", None)
         d["exit_hotkey"] = self.var_exit_hotkey.get().strip()
         d["settings_hotkey"] = self.var_settings_hotkey.get().strip() or "f12"
-        d["lens_settings_hotkey"] = self.var_lens_settings_hotkey.get().strip() or "f11"
+        d.pop("lens_settings_hotkey", None)
         d["capture_hotkey"] = self.var_capture_hotkey.get().strip() or "middle_click"
         d.pop("hotkey", None)
 

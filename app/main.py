@@ -25,6 +25,7 @@ from app.memory import MemoryStore, semantic_hints_for_translate
 from app.series_config import (
     append_translate_text_correction,
     apply_text_corrections,
+    combo_display_for_key,
     get_active_series_translation,
     get_series_profile,
 )
@@ -119,7 +120,6 @@ class App:
         self._pressed_keys: set = set()
         self._exit_groups: list[set] = []
         self._settings_groups: list[set] = []
-        self._lens_settings_groups: list[set] = []
         self._lens_resize_width_groups: list[set] = []
         self._lens_resize_height_up_groups: list[set] = []
         self._lens_resize_height_down_groups: list[set] = []
@@ -136,7 +136,6 @@ class App:
         exit_hotkey = self.config.get("exit_hotkey", "<ctrl>+q")
         show_btn = self.config.get("show_exit_button", True)
         settings_hotkey = self.config.get("settings_hotkey", "f12")
-        lens_hotkey = self.config.get("lens_settings_hotkey", "f11")
         print("OCR Translator running.")
         trig = hotkey_readable(
             config_capture_trigger_raw(self.config),
@@ -144,7 +143,6 @@ class App:
         )
         print(f"  Capture : {trig}")
         print(f"  Exit    : {hotkey_friendly(exit_hotkey)}" + (" / red Exit button" if show_btn else ""))
-        print(f"  Lens settings : {hotkey_friendly(lens_hotkey)}")
         print()
 
         self.root.mainloop()
@@ -156,9 +154,6 @@ class App:
         sq = self.config.get("settings_hotkey", "f12")
         sparsed = parse_hotkey(sq)
         self._settings_groups = sparsed if sparsed else parse_hotkey("f12")
-        lsq = self.config.get("lens_settings_hotkey", "f11")
-        lparsed = parse_hotkey(str(lsq).strip())
-        self._lens_settings_groups = lparsed if lparsed else parse_hotkey("f11")
         self._lens_resize_width_groups = _parse_hotkey_or_empty(
             self.config.get("lens_hotkey_resize_width"),
         )
@@ -206,6 +201,25 @@ class App:
                 except tk.TclError:
                     pass
                 self._exit_btn = None
+        self._refresh_exit_button_profile()
+
+    def _refresh_exit_button_profile(self) -> None:
+        if self._exit_btn is None:
+            return
+        sk, _ = get_active_series_translation(self.config)
+        t = self.config.get("translate") or {}
+        profiles = t.get("series_profiles")
+        if not isinstance(profiles, dict):
+            profiles = {}
+        if not sk:
+            self._exit_btn.set_profile_display("Reading: (none)", "")
+            return
+        line1 = f"Reading: {combo_display_for_key(profiles, sk)}"
+        prof = get_series_profile(self.config, sk)
+        comic = ""
+        if isinstance(prof, dict):
+            comic = str(prof.get("series_name", "") or "").strip()
+        self._exit_btn.set_profile_display(line1, comic)
 
     def _open_settings(self) -> None:
         try:
@@ -236,14 +250,9 @@ class App:
         if self._settings_panel is not None:
             try:
                 if self._settings_panel.winfo_exists():
-                    if getattr(self._settings_panel, "_lens_only", False):
-                        self._skip_next_panel_restore = True
-                        self._settings_panel.destroy()
-                        self._settings_panel = None
-                    else:
-                        self.lens.set_wheel_resize_enabled(False)
-                        _bring_settings_to_foreground(self._settings_panel)
-                        return
+                    self.lens.set_wheel_resize_enabled(False)
+                    _bring_settings_to_foreground(self._settings_panel)
+                    return
             except tk.TclError:
                 pass
             self._settings_panel = None
@@ -292,89 +301,6 @@ class App:
             except Exception:
                 pass
 
-    def _open_lens_settings(self) -> None:
-        try:
-            from app.config_panel import ConfigPanel, _bring_settings_to_foreground
-        except Exception as e:
-            print(f"[Lens settings] Import failed: {e}")
-            try:
-                messagebox.showerror("Lens settings", f"Could not load settings panel:\n{e}")
-            except Exception:
-                pass
-            return
-
-        try:
-            snapshot = load_config()
-        except Exception as e:
-            print(f"[Lens settings] Config load failed: {e}")
-            try:
-                messagebox.showerror("Lens settings", f"Could not read config.json:\n{e}")
-            except Exception:
-                pass
-            return
-
-        self.lens.hide()
-        self.lens.set_wheel_resize_enabled(False)
-        if self._exit_btn is not None:
-            self._exit_btn.set_always_on_top(False)
-
-        if self._settings_panel is not None:
-            try:
-                if self._settings_panel.winfo_exists():
-                    if getattr(self._settings_panel, "_lens_only", False):
-                        self.lens.set_wheel_resize_enabled(False)
-                        _bring_settings_to_foreground(self._settings_panel)
-                        return
-                    self._skip_next_panel_restore = True
-                    self._settings_panel.destroy()
-            except tk.TclError:
-                pass
-            self._settings_panel = None
-
-        def on_saved(new_cfg: dict) -> None:
-            self.config = new_cfg
-            self.lens.apply_config(new_cfg)
-            self._reload_hotkeys()
-            self._sync_exit_button()
-            if self._exit_btn is not None:
-                self._exit_btn.set_ai_url(new_cfg.get("ai_url", "http://localhost:12434"))
-
-        panel_holder: list = []
-
-        def _restore_lens_controls() -> None:
-            self.lens.show()
-            self.lens.set_wheel_resize_enabled(True)
-            self.lens.set_always_on_top(True)
-            if self._exit_btn is not None:
-                self._exit_btn.set_always_on_top(True)
-
-        def _on_panel_destroy(ev=None) -> None:
-            root_panel = panel_holder[0] if panel_holder else None
-            if ev is not None and getattr(ev, "widget", None) is not root_panel:
-                return
-            panel_holder.clear()
-            self._settings_panel = None
-            if getattr(self, "_skip_next_panel_restore", False):
-                self._skip_next_panel_restore = False
-                return
-            _restore_lens_controls()
-
-        try:
-            panel = ConfigPanel(self.root, snapshot, on_saved, panel_mode="lens_only")
-            panel_holder.append(panel)
-            self._settings_panel = panel
-            panel.bind("<Destroy>", _on_panel_destroy)
-            self.root.after(120, lambda: _bring_settings_to_foreground(panel))
-        except Exception as e:
-            self._settings_panel = None
-            self.lens.set_wheel_resize_enabled(True)
-            _restore_lens_controls()
-            print(f"[Lens settings] Open failed: {e}")
-            try:
-                messagebox.showerror("Lens settings", f"Could not open lens panel:\n{e}")
-            except Exception:
-                pass
-
     # --- Mouse ---
 
     def _on_click(self, x, y, button, pressed, injected=False):
@@ -414,11 +340,6 @@ class App:
             group & self._pressed_keys for group in self._lens_resize_height_down_groups
         ):
             self.root.after(0, lambda: self.lens.resize_height_delta(-SCROLL_STEP))
-            return
-        if self._lens_settings_groups and all(
-            group & self._pressed_keys for group in self._lens_settings_groups
-        ):
-            self.root.after(0, self._open_lens_settings)
             return
         if self._settings_groups and all(
             group & self._pressed_keys for group in self._settings_groups
@@ -579,6 +500,7 @@ class App:
             return f"Could not save config: {e}"
         try:
             self.config = load_config()
+            self._refresh_exit_button_profile()
         except Exception:
             pass
         return ""

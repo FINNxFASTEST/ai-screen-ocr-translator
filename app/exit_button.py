@@ -12,6 +12,16 @@ TEXT_COLOR = "#ffffff"
 STATUS_OK = "#00ff88"
 STATUS_ERR = "#ff4444"
 STATUS_BUSY = "#888888"
+COMIC_FG = "#a8c8ff"
+PROFILE_TEXT_MAX = 20
+
+
+def _ellipsize(s: str, max_chars: int = PROFILE_TEXT_MAX) -> str:
+    if not s:
+        return ""
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars] + "..."
 
 
 class ExitButton:
@@ -35,6 +45,50 @@ class ExitButton:
         frame = tk.Frame(self.win, bg=BG, padx=6, pady=6)
         frame.pack()
 
+        self._profile_line_full = ""
+        self._comic_line_full = ""
+        self._profile_expanded = False
+
+        self.profile_row = tk.Frame(frame, bg=BG)
+        self.profile_row.pack(fill=tk.X, pady=(0, 2))
+
+        self.profile_title = tk.Label(
+            self.profile_row,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            fg=TEXT_COLOR,
+            bg=BG,
+            anchor="w",
+        )
+        self.profile_title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.profile_expand_btn = tk.Button(
+            self.profile_row,
+            text="···",
+            font=("Segoe UI", 8, "bold"),
+            fg=TEXT_COLOR,
+            bg="#2a2a2a",
+            activebackground="#3a3a3a",
+            activeforeground=TEXT_COLOR,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=4,
+            pady=0,
+            width=3,
+            command=self._toggle_profile_expand,
+        )
+
+        self.profile_comic = tk.Label(
+            frame,
+            text="",
+            font=("Segoe UI", 8),
+            fg=COMIC_FG,
+            bg=BG,
+            anchor="w",
+        )
+        self._profile_comic_visible = False
+        self._first_btn_ref = None
+
         if settings_command:
             self.settings_btn = tk.Button(
                 frame,
@@ -51,6 +105,9 @@ class ExitButton:
                 command=settings_command,
             )
             self.settings_btn.pack(fill=tk.X, pady=(0, 4))
+            self._first_btn_ref = self.settings_btn
+        else:
+            self.settings_btn = None
 
         self.test_btn = tk.Button(
             frame,
@@ -94,6 +151,9 @@ class ExitButton:
         )
         self.exit_btn.pack(fill=tk.X)
 
+        if self._first_btn_ref is None:
+            self._first_btn_ref = self.test_btn
+
         self.win.bind("<Button-1>", self._drag_start)
         self.win.bind("<B1-Motion>", self._drag_move)
         self._drag_x = 0
@@ -134,6 +194,55 @@ class ExitButton:
 
     def set_ai_url(self, url: str):
         self.ai_url = url
+
+    def set_profile_display(self, profile_line: str, comic_line: str) -> None:
+        """Active series profile (above Settings) and optional comic / series name."""
+        self._profile_line_full = profile_line or ""
+        self._comic_line_full = (comic_line or "").strip()
+        self._profile_expanded = False
+        self._apply_profile_labels()
+
+    def _toggle_profile_expand(self):
+        self._profile_expanded = not self._profile_expanded
+        self._apply_profile_labels()
+
+    def _needs_expand(self) -> bool:
+        pl = self._profile_line_full or ""
+        cl = (self._comic_line_full or "").strip()
+        return len(pl) > PROFILE_TEXT_MAX or len(cl) > PROFILE_TEXT_MAX
+
+    def _apply_profile_labels(self):
+        pl_full = self._profile_line_full or ""
+        cl_full = (self._comic_line_full or "").strip()
+
+        if self._profile_expanded:
+            pl = pl_full
+            ct = cl_full
+        else:
+            pl = _ellipsize(pl_full)
+            ct = _ellipsize(cl_full) if cl_full else ""
+
+        self.profile_title.config(text=pl)
+
+        if self._needs_expand():
+            self.profile_expand_btn.pack(side=tk.RIGHT)
+            self.profile_expand_btn.config(text="▲" if self._profile_expanded else "···")
+        else:
+            self.profile_expand_btn.pack_forget()
+
+        if ct:
+            self.profile_comic.config(text=ct)
+            if not self._profile_comic_visible:
+                self.profile_comic.pack(
+                    fill=tk.X,
+                    pady=(0, 4),
+                    before=self._first_btn_ref,
+                )
+                self._profile_comic_visible = True
+        else:
+            if self._profile_comic_visible:
+                self.profile_comic.pack_forget()
+                self._profile_comic_visible = False
 
     def set_always_on_top(self, enabled: bool) -> None:
         try:
