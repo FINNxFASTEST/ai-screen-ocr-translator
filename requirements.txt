@@ -3,6 +3,7 @@ paddleocr
 mss
 Pillow
 requests
+PyYAML
 pynput
 pyautogui
 wordninja

@@ -31,10 +31,14 @@ class ExitButton:
         on_exit,
         ai_url: str = "http://localhost:12434",
         settings_command=None,
+        *,
+        popup_quick_append: bool = False,
+        on_popup_quick_append_change=None,
     ):
         self.root = root
         self.on_exit = on_exit
         self.ai_url = ai_url
+        self._on_popup_quick_append_change = on_popup_quick_append_change
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -87,6 +91,25 @@ class ExitButton:
             anchor="w",
         )
         self._profile_comic_visible = False
+
+        self.quick_row = tk.Frame(frame, bg=BG)
+        self.var_quick_translate = tk.BooleanVar(value=bool(popup_quick_append))
+        self.quick_translate_cb = tk.Checkbutton(
+            self.quick_row,
+            text="Quick translate",
+            variable=self.var_quick_translate,
+            command=self._on_quick_translate_clicked,
+            font=("Segoe UI", 8),
+            fg=TEXT_COLOR,
+            bg=BG,
+            activebackground=BG,
+            activeforeground=TEXT_COLOR,
+            selectcolor="#2a2a2a",
+            highlightthickness=0,
+            cursor="hand2",
+        )
+        self.quick_translate_cb.pack(anchor="w")
+
         self._first_btn_ref = None
 
         if settings_command:
@@ -104,10 +127,12 @@ class ExitButton:
                 pady=5,
                 command=settings_command,
             )
+            self.quick_row.pack(fill=tk.X, pady=(0, 4))
             self.settings_btn.pack(fill=tk.X, pady=(0, 4))
             self._first_btn_ref = self.settings_btn
         else:
             self.settings_btn = None
+            self.quick_row.pack(fill=tk.X, pady=(0, 4))
 
         self.test_btn = tk.Button(
             frame,
@@ -154,6 +179,8 @@ class ExitButton:
         if self._first_btn_ref is None:
             self._first_btn_ref = self.test_btn
 
+        self._anchor_below_profile = self.quick_row
+
         self.win.bind("<Button-1>", self._drag_start)
         self.win.bind("<B1-Motion>", self._drag_move)
         self._drag_x = 0
@@ -194,6 +221,13 @@ class ExitButton:
 
     def set_ai_url(self, url: str):
         self.ai_url = url
+
+    def set_popup_quick_append(self, enabled: bool) -> None:
+        self.var_quick_translate.set(bool(enabled))
+
+    def _on_quick_translate_clicked(self) -> None:
+        if self._on_popup_quick_append_change:
+            self._on_popup_quick_append_change(bool(self.var_quick_translate.get()))
 
     def set_profile_display(self, profile_line: str, comic_line: str) -> None:
         """Active series profile (above Settings) and optional comic / series name."""
@@ -236,7 +270,7 @@ class ExitButton:
                 self.profile_comic.pack(
                     fill=tk.X,
                     pady=(0, 4),
-                    before=self._first_btn_ref,
+                    before=self._anchor_below_profile,
                 )
                 self._profile_comic_visible = True
         else:

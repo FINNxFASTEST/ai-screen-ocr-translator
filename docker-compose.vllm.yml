@@ -1,0 +1,46 @@
+# OpenAI-compatible vLLM service for **olmOCR (local vLLM)** in the manga translator.
+# This is separate from `docker-compose.yml` (Docker Model Runner / `provider:` schema).
+#
+# Start (from repo root, with NVIDIA GPU available to Docker):
+#   docker compose -f docker-compose.vllm.yml up -d
+# Logs (wait until the server is ready — first pull can take a long time):
+#   docker compose -f docker-compose.vllm.yml logs -f olmocr-vllm
+#
+# Point the app OCR tab at: Server base URL = http://127.0.0.1:30024
+# Model id: use `/v1/models` or set to `olmocr` if you keep --served-model-name below.
+#
+# Windows: use Docker Desktop with WSL2 backend and GPU support; pure Windows containers
+# will not run this image. CPU-only mode is intentionally not documented (far too slow).
+#
+# Tune via env vars (optional `.env` next to this file):
+#   VLLM_IMAGE, OLMOCR_VLLM_MODEL, OLMOCR_SERVED_NAME, OLMOCR_VLLM_PORT,
+#   VLLM_GPU_MEM_UTIL, VLLM_MAX_MODEL_LEN, HUGGING_FACE_HUB_TOKEN (or HF_TOKEN)
+
+services:
+  olmocr-vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    container_name: manga-translator-olmocr-vllm
+    shm_size: "8gb"
+    gpus: all
+    ports:
+      - "${OLMOCR_VLLM_PORT:-30024}:30024"
+    environment:
+      # Set in `.env` (do not commit): HUGGING_FACE_HUB_TOKEN=hf_...  (HF_TOKEN also works)
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+    volumes:
+      - olmocr-hf-cache:/root/.cache/huggingface
+    command: >
+      --model ${OLMOCR_VLLM_MODEL:-allenai/olmOCR-2-7B-1025-FP8}
+      --served-model-name ${OLMOCR_SERVED_NAME:-olmocr}
+      --host 0.0.0.0
+      --port 30024
+      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.90}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
+      --limit-mm-per-prompt "{\"video\":0}"
+    ipc: host
+    restart: unless-stopped
+
+volumes:
+  olmocr-hf-cache:

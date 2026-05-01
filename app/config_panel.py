@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, messagebox, simpledialog, ttk
@@ -21,6 +23,8 @@ from app.series_config import (
     slugify_series_key,
 )
 from app.lens import MAX_RADIUS, MIN_RADIUS
+import requests
+
 from app.hotkeys import (
     config_capture_trigger_raw,
     normalize_lens_wheel_mod,
@@ -41,6 +45,14 @@ _SHORTCUT_MUTED_FG = "#666666"
 # Space after fixed-width labels before the next control (Spinbox, Entry, Combobox, shortcut text).
 _SETTINGS_ROW_LABEL_GAP = (0, 12)
 
+_OCR_ENGINE_LABELS = (
+    "PaddleOCR (local)",
+    "AI Vision OCR (Docker)",
+    "olmOCR (HTTP)",
+    "olmOCR (local vLLM)",
+)
+_OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr", "olmocr_local")
+
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
     ("Left mouse button", "left_click"),
@@ -50,6 +62,27 @@ _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
 ]
 
 _CAPTURE_LABEL_TO_TOKEN = {label: token for label, token in _CAPTURE_MOUSE_CHOICES}
+
+
+def _normalize_openai_compatible_base(url: str) -> str:
+    """Strip slashes and optional ``/v1`` so we can append ``/v1/models`` reliably."""
+    u = (url or "").strip().rstrip("/")
+    if u.lower().endswith("/v1"):
+        u = u[:-3].rstrip("/")
+    return u
+
+
+def _parse_models_from_openai_json(payload: dict) -> list[str]:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for x in data:
+        if isinstance(x, dict):
+            mid = x.get("id")
+            if isinstance(mid, str) and mid.strip():
+                out.append(mid.strip())
+    return sorted(set(out))
 _CAPTURE_MOUSE_TOKEN_SET = {token.lower() for _, token in _CAPTURE_MOUSE_CHOICES}.union(
     {"x1", "x2", "back", "forward"}
 )
@@ -225,8 +258,7 @@ class ConfigPanel(tk.Toplevel):
         self._tab_ai(nb)
         self._tab_lens(nb)
         self._tab_popup(nb)
-        self._tab_ai_ocr(nb)
-        self._tab_easyocr(nb)
+        self._tab_ocr(nb)
 
         nb.bind("<<NotebookTabChanged>>", _notebook_scroll_sync)
         self.after(150, _notebook_scroll_sync)
@@ -676,7 +708,8 @@ class ConfigPanel(tk.Toplevel):
             gloss_lf,
             text=(
                 "One line per name or phrase. Example: Kaoru — main character; garbled OCR like "
-                '"if ka or u", "Iwonder…" usually means Kaoru.'
+                '"if ka or u", "Iwonder…" usually means Kaoru. '
+                "Search & Fill Context also merges AI-suggested names/terms here (existing lines kept; duplicates skipped)."
             ),
             fg="#666",
             wraplength=520,
@@ -989,6 +1022,12 @@ class ConfigPanel(tk.Toplevel):
         except Exception:
             pass
 
+        gloss_footer = (
+            "\n\nAfter that, on its own line write exactly:\n---GLOSSARY---\n"
+            "Then one canonical English (or Japanese) spelling per line: main character names and "
+            "series-specific terms the translator must spell consistently. No bullets or numbering. "
+            "If there is nothing to list, write ---GLOSSARY--- with nothing below it."
+        )
         if wiki_summary:
             ai_input = (
                 f'Series: {name}\n\nBackground (Wikipedia):\n{wiki_summary}\n\n'
@@ -998,7 +1037,8 @@ class ConfigPanel(tk.Toplevel):
                 f'2. Which character names and special terms to keep in English (or Japanese for manga).\n'
                 f'3. The tone and style of the dialogue.\n'
                 f'4. Any important catchphrases or terminology to handle carefully.\n'
-                f'Keep the total under 250 words. Write only the system prompt text, nothing else.'
+                f'Keep the system prompt under 250 words.'
+                f'{gloss_footer}'
             )
         else:
             ai_input = (
@@ -1008,7 +1048,8 @@ class ConfigPanel(tk.Toplevel):
                 f'2. Which character names and special terms to keep in English (or Japanese for manga).\n'
                 f'3. The tone and style of the dialogue.\n'
                 f'4. Any important catchphrases or terminology to handle carefully.\n'
-                f'Keep the total under 250 words. Write only the system prompt text, nothing else.'
+                f'Keep the system prompt under 250 words.'
+                f'{gloss_footer}'
             )
 
         try:
@@ -1025,45 +1066,228 @@ class ConfigPanel(tk.Toplevel):
         except Exception as e:
             self.after(0, self._search_context_error, str(e))
 
+    @staticmethod
+    def _split_generated_context_glossary(raw: str) -> tuple[str, str]:
+        t = (raw or "").strip()
+        if not t:
+            return "", ""
+        m = re.search(r"^---\s*GLOSSARY\s*---\s*$", t, re.MULTILINE | re.IGNORECASE)
+        if not m:
+            return t, ""
+        ctx = t[: m.start()].strip()
+        gloss = t[m.end() :].strip()
+        return ctx, gloss
+
+    def _merge_glossary_lines(self, existing: str, addition: str) -> str:
+        """Append non-empty lines from addition that are not already present (case-insensitive)."""
+        seen = {
+            ln.strip().lower()
+            for ln in existing.splitlines()
+            if ln.strip()
+        }
+        out_lines = [ln for ln in existing.splitlines()]
+        for ln in addition.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out_lines.append(s)
+        return "\n".join(out_lines).strip("\n")
+
     def _apply_generated_context(self, text: str) -> None:
+        ctx_text, gloss_block = self._split_generated_context_glossary(text)
         self.txt_context.delete("1.0", "end")
-        self.txt_context.insert("1.0", text)
+        self.txt_context.insert("1.0", ctx_text)
+
+        cur_gloss = self.txt_glossary.get("1.0", "end").rstrip("\n")
+        merged = self._merge_glossary_lines(cur_gloss, gloss_block)
+        series_line = self.var_series_name.get().strip()
+        if series_line:
+            merged = self._merge_glossary_lines(merged, series_line)
+        self.txt_glossary.delete("1.0", "end")
+        self.txt_glossary.insert("1.0", merged)
+
         self._btn_search_ctx.configure(state="normal", text="Search & Fill Context")
 
     def _search_context_error(self, msg: str) -> None:
         self._btn_search_ctx.configure(state="normal", text="Search & Fill Context")
         messagebox.showerror("Context search failed", f"Could not generate context:\n{msg}", parent=self)
 
-    def _tab_ai_ocr(self, nb: ttk.Notebook):
-        tab = tk.Frame(nb, padx=12, pady=12)
-        nb.add(tab, text="AI OCR")
-        ai = self._data.get("ai_ocr") or {}
+    def _ocr_swap_panels(self, engine_key: str) -> None:
+        for fr in self._ocr_engine_frames:
+            fr.pack_forget()
+        if engine_key == "paddleocr":
+            self._fr_ocr_paddle.pack(fill=tk.BOTH, expand=True)
+        elif engine_key == "ai_vision":
+            self._fr_ocr_ai.pack(fill=tk.BOTH, expand=True)
+        elif engine_key == "olm_ocr":
+            self._fr_ocr_olm.pack(fill=tk.BOTH, expand=True)
+        else:
+            self._fr_ocr_olm_local.pack(fill=tk.BOTH, expand=True)
 
-        self.var_ai_ocr_en = tk.BooleanVar(value=bool(ai.get("enabled", False)))
-        tk.Checkbutton(tab, text="Use vision model for OCR instead of EasyOCR", variable=self.var_ai_ocr_en).pack(
-            anchor="w", pady=(0, 8)
+    def _ocr_engine_from_ui(self) -> str:
+        i = self._cb_ocr_engine.current()
+        if i < 0 or i >= len(_OCR_ENGINE_KEYS):
+            return "paddleocr"
+        return _OCR_ENGINE_KEYS[i]
+
+    def _pick_openai_model(
+        self,
+        url_var: tk.StringVar,
+        model_var: tk.StringVar,
+        api_key_var: tk.StringVar | None = None,
+    ) -> None:
+        """GET ``/v1/models`` from an OpenAI-compatible server; user picks an ``id`` into ``model_var``."""
+        base = _normalize_openai_compatible_base(url_var.get())
+        if not base:
+            messagebox.showwarning(
+                "Models",
+                "Enter a server base URL first (e.g. http://127.0.0.1:30024 or your AI base URL).",
+                parent=self,
+            )
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Select model")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(420, 280)
+
+        frm = tk.Frame(dlg, padx=10, pady=8)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frm, text=f"Models from:\n{base}/v1/models", anchor="w", justify="left").pack(
+            fill=tk.X,
+            pady=(0, 6),
+        )
+        status = tk.Label(frm, text="Loading…", anchor="w", fg="#666666")
+        status.pack(fill=tk.X)
+
+        lb_fr = tk.Frame(frm)
+        lb_fr.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        scrollbar = ttk.Scrollbar(lb_fr, orient="vertical")
+        lb = tk.Listbox(lb_fr, height=14, font=("Consolas", 10), yscrollcommand=scrollbar.set)
+        scrollbar.config(command=lb.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _dlg_alive() -> bool:
+            try:
+                return bool(dlg.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def apply_selection():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showinfo("Models", "Select a model first.", parent=dlg)
+                return
+            model_var.set(lb.get(sel[0]))
+            dlg.destroy()
+
+        def on_double(_evt=None):
+            if lb.curselection():
+                apply_selection()
+
+        lb.bind("<Double-Button-1>", on_double)
+
+        btn_fr = tk.Frame(frm)
+        btn_fr.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_fr, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_fr, text="Use selected", command=apply_selection).pack(side=tk.RIGHT)
+
+        list_timeout = 25
+
+        def load_task():
+            err: str | None = None
+            ids: list[str] = []
+            try:
+                headers: dict[str, str] = {}
+                if api_key_var is not None:
+                    key = api_key_var.get().strip()
+                    if key:
+                        headers["Authorization"] = f"Bearer {key}"
+                r = requests.get(f"{base}/v1/models", headers=headers or None, timeout=list_timeout)
+                if not r.ok:
+                    err = f"HTTP {r.status_code}: {r.text.strip()[:400]}"
+                else:
+                    j = r.json()
+                    ids = _parse_models_from_openai_json(j)
+                    if not ids:
+                        err = "Empty or unrecognized /v1/models response."
+            except requests.exceptions.RequestException as e:
+                err = str(e)
+            except Exception as e:
+                err = str(e)
+
+            def finish():
+                if not _dlg_alive():
+                    return
+                if err:
+                    status.configure(text=err, fg="#b00020")
+                    messagebox.showerror("Models", f"Could not list models:\n{err}", parent=dlg)
+                    return
+                for mid in ids:
+                    lb.insert(tk.END, mid)
+                status.configure(text=f"{len(ids)} model(s). Double-click or Use selected.", fg="#666666")
+
+            self.after(0, finish)
+
+        threading.Thread(target=load_task, daemon=True).start()
+
+        self.update_idletasks()
+        x = self.winfo_rootx() + 40
+        y = self.winfo_rooty() + 80
+        dlg.geometry(f"480x360+{x}+{y}")
+
+    def _tab_ocr(self, nb: ttk.Notebook):
+        tab = tk.Frame(nb, padx=12, pady=12)
+        nb.add(tab, text="OCR")
+        o = self._data.get("ocr") or {}
+        ai = self._data.get("ai_ocr") or {}
+        olm = self._data.get("olm_ocr") or {}
+        olm_local = self._data.get("olmocr_local") or {}
+
+        engine = str(o.get("engine") or "").strip().lower()
+        if not engine:
+            engine = "ai_vision" if ai.get("enabled") else "paddleocr"
+        if engine not in _OCR_ENGINE_KEYS:
+            engine = "paddleocr"
+
+        row0 = tk.Frame(tab)
+        row0.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(row0, text="OCR engine:", width=14, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self._cb_ocr_engine = ttk.Combobox(
+            row0,
+            values=_OCR_ENGINE_LABELS,
+            state="readonly",
+            width=36,
+        )
+        self._cb_ocr_engine.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        try:
+            idx = _OCR_ENGINE_KEYS.index(engine)
+        except ValueError:
+            idx = 0
+        self._cb_ocr_engine.current(idx)
+
+        body = tk.Frame(tab)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        self._fr_ocr_paddle = tk.Frame(body)
+        self._fr_ocr_ai = tk.Frame(body)
+        self._fr_ocr_olm = tk.Frame(body)
+        self._fr_ocr_olm_local = tk.Frame(body)
+        self._ocr_engine_frames = (
+            self._fr_ocr_paddle,
+            self._fr_ocr_ai,
+            self._fr_ocr_olm,
+            self._fr_ocr_olm_local,
         )
 
-        self.var_ai_ocr_model = tk.StringVar(value=str(ai.get("model", "")))
-        fr = tk.Frame(tab)
-        fr.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr, text="Vision model:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        tk.Entry(fr, textvariable=self.var_ai_ocr_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        lf = tk.LabelFrame(tab, text="Vision OCR prompt")
-        lf.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        self.txt_ai_ocr = ScrolledText(lf, height=8, wrap=tk.WORD, font=("Consolas", 10))
-        self.txt_ai_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.txt_ai_ocr.insert("1.0", ai.get("prompt", ""))
-
-        self.var_ai_ocr_debug = tk.BooleanVar(value=bool(ai.get("debug", False)))
-        tk.Checkbutton(tab, text="AI OCR debug dumps", variable=self.var_ai_ocr_debug).pack(anchor="w", pady=(8, 0))
-
-    def _tab_easyocr(self, nb: ttk.Notebook):
-        tab = tk.Frame(nb, padx=12, pady=12)
-        nb.add(tab, text="EasyOCR")
-        o = self._data.get("ocr") or {}
-
+        # --- PaddleOCR (local): preprocessing tunables ---
         self.var_ocr_upscale = tk.IntVar(value=int(o.get("upscale", 2)))
         self.var_ocr_contrast = tk.DoubleVar(value=float(o.get("contrast", 1.0)))
         self.var_ocr_sharp = tk.DoubleVar(value=float(o.get("sharpness", 1.0)))
@@ -1076,6 +1300,8 @@ class ConfigPanel(tk.Toplevel):
         self.var_ocr_mag = tk.DoubleVar(value=float(o.get("mag_ratio", 2.0)))
         self.var_ocr_min = tk.IntVar(value=int(o.get("min_size", 8)))
 
+        pf = self._fr_ocr_paddle
+        pf.columnconfigure(0, weight=1)
         specs = [
             ("Upscale", self.var_ocr_upscale, 1, 4, True, 1),
             ("Contrast", self.var_ocr_contrast, 0.5, 3.0, False, 0.05),
@@ -1086,30 +1312,161 @@ class ConfigPanel(tk.Toplevel):
             ("mag_ratio", self.var_ocr_mag, 0.5, 4.0, False, 0.05),
             ("min_size", self.var_ocr_min, 1, 64, True, 1),
         ]
-
         for i, (name, var, lo, hi, is_int, inc) in enumerate(specs):
-            fr = tk.Frame(tab)
+            fr = tk.Frame(pf)
             fr.grid(row=i, column=0, sticky="ew", pady=2)
             tk.Label(fr, text=name + ":", width=16, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             if is_int:
                 tk.Spinbox(fr, from_=lo, to=hi, textvariable=var, width=12).pack(side=tk.LEFT)
             else:
                 tk.Spinbox(fr, from_=lo, to=hi, increment=inc, textvariable=var, width=12).pack(side=tk.LEFT)
-
-        tk.Checkbutton(tab, text="Binarize", variable=self.var_ocr_binarize).grid(row=len(specs), column=0, sticky="w")
-        tk.Checkbutton(tab, text="Fix case (manga caps)", variable=self.var_ocr_fix_case).grid(
+        tk.Checkbutton(pf, text="Binarize", variable=self.var_ocr_binarize).grid(row=len(specs), column=0, sticky="w")
+        tk.Checkbutton(pf, text="Fix case (manga caps)", variable=self.var_ocr_fix_case).grid(
             row=len(specs) + 1, column=0, sticky="w", pady=(4, 0)
         )
-        tk.Checkbutton(tab, text="EasyOCR debug dumps", variable=self.var_ocr_debug).grid(
+        tk.Checkbutton(pf, text="PaddleOCR preprocess debug dumps", variable=self.var_ocr_debug).grid(
             row=len(specs) + 2, column=0, sticky="w", pady=(4, 0)
         )
+
+        # --- AI Vision OCR (Docker Model Runner) ---
+        af = self._fr_ocr_ai
+        self.var_ai_ocr_model = tk.StringVar(value=str(ai.get("model", "")))
+        fr_ai = tk.Frame(af)
+        fr_ai.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_ai, text="Vision model:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        tk.Entry(fr_ai, textvariable=self.var_ai_ocr_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(
+            fr_ai,
+            text="List models…",
+            command=lambda: self._pick_openai_model(self.var_ai_url, self.var_ai_ocr_model, None),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        lf_ai = tk.LabelFrame(af, text="Vision OCR prompt")
+        lf_ai.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.txt_ai_ocr = ScrolledText(lf_ai, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_ai_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.txt_ai_ocr.insert("1.0", ai.get("prompt", ""))
+        self.var_ai_ocr_debug = tk.BooleanVar(value=bool(ai.get("debug", False)))
+        tk.Checkbutton(af, text="AI Vision OCR debug dumps", variable=self.var_ai_ocr_debug).pack(
+            anchor="w", pady=(8, 0)
+        )
+
+        # --- olmOCR (OpenAI-compatible HTTP) ---
+        of = self._fr_ocr_olm
+        self.var_olm_url = tk.StringVar(value=str(olm.get("url", "")))
+        fr_u = tk.Frame(of)
+        fr_u.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_u, text="Server base URL:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        tk.Entry(fr_u, textvariable=self.var_olm_url).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.var_olm_model = tk.StringVar(value=str(olm.get("model", "")))
+        fr_m = tk.Frame(of)
+        fr_m.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_m, text="Model id:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        tk.Entry(fr_m, textvariable=self.var_olm_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(
+            fr_m,
+            text="List models…",
+            command=lambda: self._pick_openai_model(self.var_olm_url, self.var_olm_model, None),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        lf_olm = tk.LabelFrame(of, text="olmOCR prompt")
+        lf_olm.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.txt_olm_ocr = ScrolledText(lf_olm, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_olm_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.txt_olm_ocr.insert("1.0", olm.get("prompt", ""))
+        self.var_olm_debug = tk.BooleanVar(value=bool(olm.get("debug", False)))
+        tk.Checkbutton(of, text="olmOCR debug dumps", variable=self.var_olm_debug).pack(anchor="w", pady=(8, 0))
+
+        # --- olmOCR local vLLM (official YAML v4 format; expects OpenAI-compatible server on this PC) ---
+        lf_loc = self._fr_ocr_olm_local
+        self.var_olmocr_local_url = tk.StringVar(value=str(olm_local.get("url", "")))
+        fr_lu = tk.Frame(lf_loc)
+        fr_lu.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_lu, text="Server base URL:", width=18, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
+        tk.Entry(fr_lu, textvariable=self.var_olmocr_local_url).pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+        )
+        self.var_olmocr_local_model = tk.StringVar(value=str(olm_local.get("model", "")))
+        fr_lm = tk.Frame(lf_loc)
+        fr_lm.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_lm, text="Model id:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        tk.Entry(fr_lm, textvariable=self.var_olmocr_local_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(
+            fr_lm,
+            text="List models…",
+            command=lambda: self._pick_openai_model(
+                self.var_olmocr_local_url,
+                self.var_olmocr_local_model,
+                self.var_olmocr_local_api_key,
+            ),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        tun = tk.Frame(lf_loc)
+        tun.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(tun, text="temperature:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self.var_olmocr_local_temp = tk.DoubleVar(value=float(olm_local.get("temperature", 0.1)))
+        tk.Spinbox(tun, from_=0.0, to=2.0, increment=0.05, textvariable=self.var_olmocr_local_temp, width=12).pack(
+            side=tk.LEFT,
+            padx=(0, 12),
+        )
+        tk.Label(tun, text="max_tokens:", width=10, anchor="w").pack(side=tk.LEFT)
+        self.var_olmocr_local_maxtok = tk.IntVar(value=int(olm_local.get("max_tokens", 8000)))
+        tk.Spinbox(tun, from_=512, to=32768, increment=128, textvariable=self.var_olmocr_local_maxtok, width=8).pack(
+            side=tk.LEFT,
+            padx=(4, 0),
+        )
+        fr_lto = tk.Frame(lf_loc)
+        fr_lto.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_lto, text="HTTP timeout (s):", width=18, anchor="w").pack(
+            side=tk.LEFT,
+            padx=_SETTINGS_ROW_LABEL_GAP,
+        )
+        self.var_olmocr_local_timeout = tk.IntVar(value=int(olm_local.get("timeout", 300)))
+        tk.Spinbox(fr_lto, from_=30, to=3600, increment=30, textvariable=self.var_olmocr_local_timeout, width=10).pack(
+            side=tk.LEFT,
+        )
+        fr_lk = tk.Frame(lf_loc)
+        fr_lk.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_lk, text="API key (opt.):", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self.var_olmocr_local_api_key = tk.StringVar(value=str(olm_local.get("api_key", "")))
+        tk.Entry(fr_lk, textvariable=self.var_olmocr_local_api_key, show="*").pack(
+            side=tk.LEFT,
+            fill=tk.X,
+            expand=True,
+        )
+        lf_prompt_loc = tk.LabelFrame(
+            lf_loc,
+            text="Optional prompt override (empty = official olmOCR YAML v4)",
+        )
+        lf_prompt_loc.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.txt_olmocr_local_prompt = ScrolledText(
+            lf_prompt_loc,
+            height=6,
+            wrap=tk.WORD,
+            font=("Consolas", 10),
+        )
+        self.txt_olmocr_local_prompt.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.txt_olmocr_local_prompt.insert("1.0", olm_local.get("prompt", ""))
+        self.var_olmocr_local_debug = tk.BooleanVar(value=bool(olm_local.get("debug", False)))
+        tk.Checkbutton(lf_loc, text="olmOCR-local debug dumps", variable=self.var_olmocr_local_debug).pack(
+            anchor="w",
+            pady=(8, 0),
+        )
+
+        def _on_engine(_evt=None):
+            self._ocr_swap_panels(self._ocr_engine_from_ui())
+
+        self._cb_ocr_engine.bind("<<ComboboxSelected>>", _on_engine)
+        self._ocr_swap_panels(engine)
 
     def _tab_general(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, padx=12, pady=12)
         nb.add(tab, text="General")
 
         self.var_debug = tk.BooleanVar(value=bool(self._data.get("debug", False)))
-        tk.Checkbutton(tab, text='Global debug (also enables OCR debug unless disabled in OCR tabs)', variable=self.var_debug).pack(anchor="w")
+        tk.Checkbutton(tab, text='Global debug (also enables OCR debug unless disabled on the OCR tab)', variable=self.var_debug).pack(anchor="w")
 
         self.var_show_exit = tk.BooleanVar(value=bool(self._data.get("show_exit_button", True)))
         tk.Checkbutton(
@@ -1644,14 +2001,34 @@ class ConfigPanel(tk.Toplevel):
         d["translate"]["context"] = mirror_ctx or ""
         d["translate"]["series_name"] = mirror_sn
 
+        ocr_engine = self._ocr_engine_from_ui()
         d["ai_ocr"] = {
-            "enabled": bool(self.var_ai_ocr_en.get()),
+            "enabled": ocr_engine == "ai_vision",
             "model": self.var_ai_ocr_model.get().strip(),
             "prompt": self.txt_ai_ocr.get("1.0", "end").rstrip("\n"),
             "debug": bool(self.var_ai_ocr_debug.get()),
         }
 
+        d["olm_ocr"] = {
+            "url": self.var_olm_url.get().strip(),
+            "model": self.var_olm_model.get().strip(),
+            "prompt": self.txt_olm_ocr.get("1.0", "end").rstrip("\n"),
+            "debug": bool(self.var_olm_debug.get()),
+        }
+
+        d["olmocr_local"] = {
+            "url": self.var_olmocr_local_url.get().strip(),
+            "model": self.var_olmocr_local_model.get().strip(),
+            "temperature": float(self.var_olmocr_local_temp.get()),
+            "max_tokens": int(self.var_olmocr_local_maxtok.get()),
+            "timeout": int(self.var_olmocr_local_timeout.get()),
+            "api_key": self.var_olmocr_local_api_key.get().strip(),
+            "prompt": self.txt_olmocr_local_prompt.get("1.0", "end").rstrip("\n"),
+            "debug": bool(self.var_olmocr_local_debug.get()),
+        }
+
         d["ocr"] = {
+            "engine": ocr_engine,
             "upscale": int(self.var_ocr_upscale.get()),
             "contrast": float(self.var_ocr_contrast.get()),
             "sharpness": float(self.var_ocr_sharp.get()),

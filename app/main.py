@@ -7,6 +7,8 @@ from tkinter import messagebox
 from pynput import keyboard, mouse
 
 from app.ai_ocr import extract_text_ai
+from app.olm_ocr import extract_text_olm
+from app.olmocr_local import extract_text_olmocr_local
 from app.capture import capture_region
 from app.exit_button import ExitButton
 from app.hotkeys import (
@@ -193,6 +195,10 @@ class App:
                     self._quit,
                     ai_url=self.config.get("ai_url", "http://localhost:12434"),
                     settings_command=lambda: self.root.after(0, self._open_settings),
+                    popup_quick_append=bool(
+                        self.config.get("popup_quick_append", False)
+                    ),
+                    on_popup_quick_append_change=self._on_popup_quick_append_bar,
                 )
         else:
             if self._exit_btn is not None:
@@ -202,6 +208,22 @@ class App:
                     pass
                 self._exit_btn = None
         self._refresh_exit_button_profile()
+
+    def _on_popup_quick_append_bar(self, enabled: bool) -> None:
+        self.config["popup_quick_append"] = bool(enabled)
+        path = effective_config_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            data = dict(self.config)
+        data["popup_quick_append"] = bool(enabled)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"[Quick translate] Could not save config: {e}")
 
     def _refresh_exit_button_profile(self) -> None:
         if self._exit_btn is None:
@@ -264,6 +286,9 @@ class App:
             self._sync_exit_button()
             if self._exit_btn is not None:
                 self._exit_btn.set_ai_url(new_cfg.get("ai_url", "http://localhost:12434"))
+                self._exit_btn.set_popup_quick_append(
+                    bool(new_cfg.get("popup_quick_append", False))
+                )
 
         panel_holder: list = []
 
@@ -388,20 +413,44 @@ class App:
             ai_url = self.config.get("ai_url", "http://localhost:12434")
             model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
 
-            if ai_ocr_cfg.get("enabled", False):
+            ocr_root = self.config.get("ocr") or {}
+            engine = str(ocr_root.get("engine") or "").strip().lower()
+            if not engine:
+                engine = "ai_vision" if ai_ocr_cfg.get("enabled", False) else "paddleocr"
+
+            ocr_cfg = dict(ocr_root)
+            if not debug:
+                ocr_cfg["debug"] = False
+
+            if engine == "ai_vision":
                 ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma3:4B-F16")
-                spinner.update(f"Reading text ... [{ai_model}]" if debug else "Reading text ...")
+                label = f"AI Vision / {ai_model}" if debug else "AI Vision OCR"
+                spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
                 original = extract_text_ai(
                     image,
                     ai_ocr_cfg,
                     self.config.get("ocr"),
                     ai_url,
                 )
+            elif engine == "olm_ocr":
+                olm_cfg = self.config.get("olm_ocr") or {}
+                olm_model = olm_cfg.get("model", "allenai/olmOCR-2-7B-1025")
+                label = f"olmOCR / {olm_model}" if debug else "olmOCR"
+                spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
+                original = extract_text_olm(image, olm_cfg, self.config.get("ocr"), ai_url)
+            elif engine == "olmocr_local":
+                ll_cfg = self.config.get("olmocr_local") or {}
+                ll_model = ll_cfg.get("model", "allenai/olmOCR-2-7B-1025-FP8")
+                label = f"olmOCR-local / {ll_model}" if debug else "olmOCR (local vLLM)"
+                spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
+                original = extract_text_olmocr_local(
+                    image,
+                    ll_cfg,
+                    self.config.get("ocr"),
+                    ai_url,
+                )
             else:
-                spinner.update("Reading text ... [EasyOCR]" if debug else "Reading text ...")
-                ocr_cfg = dict(self.config.get("ocr") or {})
-                if not debug:
-                    ocr_cfg["debug"] = False
+                spinner.update("Reading text ... [PaddleOCR]" if debug else "Reading text ...")
                 original = extract_text(image, ocr_cfg)
 
             if not original or original.startswith("[Error"):

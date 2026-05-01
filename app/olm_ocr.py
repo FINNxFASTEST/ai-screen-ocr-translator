@@ -8,24 +8,24 @@ from PIL import Image
 from app.ocr_engine import _preprocess, _save_debug
 
 _DEFAULTS = {
-    # Docker `gemma3n` artifacts are text-only (no mmproj); use `gemma3` for vision.
-    "model": "docker.io/ai/gemma3:4B-F16",
+    "url": "http://localhost:8000",
+    "model": "allenai/olmOCR-2-7B-1025",
     "prompt": (
-        "Extract all text from this image exactly as it appears. "
-        "Reply with only the extracted text, no explanations, no formatting."
+        "Return the plain text shown in this image exactly as written. "
+        "Do not add explanations, headers, or formatting."
     ),
 }
 
 
-def extract_text_ai(
+def extract_text_olm(
     image: Image.Image,
-    ai_ocr_config: dict,
+    olm_cfg: dict,
     ocr_config: dict | None = None,
-    ai_url: str = "http://localhost:12434",
+    default_url: str = "http://localhost:12434",
 ) -> str:
-    """Extract text from image using Docker Model Runner vision model."""
+    """Extract text via olmOCR served at an OpenAI-compatible HTTP endpoint (e.g. vLLM/SGLang)."""
     cfg = ocr_config or {}
-    debug = bool(ai_ocr_config.get("debug", False)) or bool(cfg.get("debug", False))
+    debug = bool(olm_cfg.get("debug", False)) or bool(cfg.get("debug", False))
     tag = datetime.now().strftime("%H%M%S_%f")[:9] if debug else ""
 
     if debug:
@@ -34,18 +34,20 @@ def extract_text_ai(
     processed = _preprocess(image, cfg)
 
     if debug:
-        _save_debug(tag, processed, "2_preprocessed_ai")
+        _save_debug(tag, processed, "2_preprocessed_olm")
 
     buf = io.BytesIO()
     processed.save(buf, format="PNG")
     img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    model = ai_ocr_config.get("model", _DEFAULTS["model"])
-    prompt = ai_ocr_config.get("prompt", _DEFAULTS["prompt"])
+    raw_base = str(olm_cfg.get("url") or "").strip().rstrip("/")
+    base = raw_base if raw_base else str(default_url or "").strip().rstrip("/")
+    model = (olm_cfg.get("model") or _DEFAULTS["model"]).strip() or _DEFAULTS["model"]
+    prompt = (olm_cfg.get("prompt") or _DEFAULTS["prompt"]).strip() or _DEFAULTS["prompt"]
 
     try:
         resp = requests.post(
-            f"{ai_url}/v1/chat/completions",
+            f"{base}/v1/chat/completions",
             json={
                 "model": model,
                 "messages": [
@@ -53,12 +55,15 @@ def extract_text_ai(
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                            },
                         ],
                     }
                 ],
             },
-            timeout=60,
+            timeout=120,
         )
         if not resp.ok:
             try:
@@ -67,11 +72,11 @@ def extract_text_ai(
                 msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             except Exception:
                 msg = resp.text.strip() or resp.reason
-            return f"[Error: AI-OCR {resp.status_code}: {msg}]"
+            return f"[Error: olmOCR {resp.status_code}: {msg}]"
         return resp.json()["choices"][0]["message"]["content"].strip()
     except requests.exceptions.ConnectionError:
-        return "[Error: Docker Model Runner not running]"
+        return "[Error: olmOCR server not reachable]"
     except requests.exceptions.Timeout:
-        return "[Error: AI-OCR timed out]"
+        return "[Error: olmOCR timed out]"
     except Exception as e:
         return f"[Error: {e}]"
