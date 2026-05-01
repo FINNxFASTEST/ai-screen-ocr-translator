@@ -54,7 +54,7 @@
       "provider": "inherit"
     },
     "enabled": true,
-    "model": "docker.io/ai/gemma4:E2B",
+    "model": "docker.io/ai/gemma4:4B",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
   },

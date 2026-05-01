@@ -6,9 +6,11 @@ from PIL import Image
 from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, resolve_ai_ocr, vision_chat
 from app.ocr_engine import _preprocess, _save_debug
 
+# Default vision OCR image on Docker Model Runner (multimodal). Text-only hub builds lack mmproj.
+AI_VISION_MODEL_DEFAULT = "docker.io/ai/gemma4:4B"
+
 _DEFAULTS = {
-    # Docker `gemma3n` artifacts are text-only (no mmproj); use a multimodal image e.g. `gemma4:E2B`.
-    "model": "docker.io/ai/gemma4:E2B",
+    "model": AI_VISION_MODEL_DEFAULT,
     "prompt": (
         "Extract all text from this image exactly as it appears. "
         "Reply with only the extracted text, no explanations, no formatting."

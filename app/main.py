@@ -8,7 +8,7 @@ from tkinter import messagebox
 
 from pynput import keyboard, mouse
 
-from app.ai_ocr import extract_text_ai
+from app.ai_ocr import AI_VISION_MODEL_DEFAULT, extract_text_ai
 from app.olm_ocr import extract_text_olm
 from app.capture import capture_region
 from app.exit_button import ExitButton
@@ -503,7 +503,7 @@ class App:
                 ocr_cfg["debug"] = False
 
             if engine == "ai_vision":
-                ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma4:E2B")
+                ai_model = ai_ocr_cfg.get("model", AI_VISION_MODEL_DEFAULT)
                 label = f"AI Vision / {ai_model}" if debug else "AI Vision OCR"
                 spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
                 original = extract_text_ai(

@@ -11,8 +11,9 @@ CONFIG_DEFAULT_PATH = _REPO_ROOT / "config.default.json"
 CONFIG_LEGACY_PATH = _REPO_ROOT / "config.json"
 REQ_FILE = _REPO_ROOT / "requirements.txt"
 
-# Pulled on first-run wizard (same image serves translation + AI Vision OCR on Docker Model Runner)
-SETUP_DOCKER_MODEL = "docker.io/ai/gemma4:E2B"
+# Pulled on first-run wizard (Docker Model Runner)
+SETUP_DOCKER_MODEL_TRANSLATE = "docker.io/ai/gemma4:E2B"
+SETUP_DOCKER_MODEL_OCR_VISION = "docker.io/ai/gemma4:4B"
 
 BG = "#1a1a1a"
 BG2 = "#242424"
@@ -27,7 +28,8 @@ PENDING_COLOR = "#555555"
 
 _STEPS = [
     ("packages", "Install Python packages"),
-    ("model_trans", "Pull Docker model  (gemma4:E2B — translate + OCR)"),
+    ("model_trans", "Pull translation model (gemma4:E2B)"),
+    ("model_ocr", "Pull vision OCR model (gemma4:4B)"),
     ("ready", "Ready to launch"),
 ]
 
@@ -69,7 +71,7 @@ class StartBar:
         self.root.config(bg=BG)
         self.root.attributes("-topmost", True)
 
-        w, h = 500, 540
+        w, h = 500, 580
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
@@ -208,22 +210,44 @@ class StartBar:
             self._set_step("packages", "error")
             self._log_line("  ✗ pip failed — run manually:  pip install -r requirements.txt\n")
 
-        # ── 2. Docker model ──────────────────────────────────────────────
+        # ── 2. Docker models (translate + vision OCR) ────────────────────
         self._set_step("model_trans", "busy")
-        self._set_status("Pulling Docker model (translate + vision OCR)…")
-        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL}")
-        docker_ok = self._run_cmd(
-            ["docker", "model", "pull", SETUP_DOCKER_MODEL],
+        self._set_status("Pulling translation model…")
+        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL_TRANSLATE}")
+        docker_trans_ok = self._run_cmd(
+            ["docker", "model", "pull", SETUP_DOCKER_MODEL_TRANSLATE],
             label="docker",
         )
-        if docker_ok:
+        if docker_trans_ok:
             self._set_step("model_trans", "ok")
-            self._log_line("  ✓ model ready\n")
+            self._log_line("  ✓ translation model ready\n")
         else:
             self._set_step("model_trans", "warn")
             self._log_line(
-                "  ! Could not pull model — Docker Model Runner may not be running.\n"
-                "    You can still launch the app (OCR will work; translation needs Docker).\n"
+                "  ! Could not pull translation model — is Docker Model Runner running?\n"
+            )
+
+        self._set_step("model_ocr", "busy")
+        self._set_status("Pulling vision OCR model…")
+        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL_OCR_VISION}")
+        docker_ocr_ok = self._run_cmd(
+            ["docker", "model", "pull", SETUP_DOCKER_MODEL_OCR_VISION],
+            label="docker",
+        )
+        if docker_ocr_ok:
+            self._set_step("model_ocr", "ok")
+            self._log_line("  ✓ vision OCR model ready\n")
+        else:
+            self._set_step("model_ocr", "warn")
+            self._log_line(
+                "  ! Could not pull vision OCR model — is Docker Model Runner running?\n"
+            )
+
+        if not docker_trans_ok or not docker_ocr_ok:
+            self._log_line(
+                "  You can still launch the app; run the pulls manually when Model Runner is up:\n"
+                f"    docker model pull {SETUP_DOCKER_MODEL_TRANSLATE}\n"
+                f"    docker model pull {SETUP_DOCKER_MODEL_OCR_VISION}\n"
             )
 
         # ── done ─────────────────────────────────────────────────────────

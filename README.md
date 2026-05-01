@@ -27,10 +27,11 @@ pip install -r requirements.txt
 ### 2. Pull translation / vision models (Docker Model Runner)
 
 ```bash
-docker model pull docker.io/ai/gemma4:E2B
+docker model pull docker.io/ai/gemma4:E2B   # translation
+docker model pull docker.io/ai/gemma4:4B    # AI Vision OCR
 ```
 
-**AI Vision OCR** (`ocr.engine`: `ai_vision`) expects a **multimodal** model. The default pull is **`docker.io/ai/gemma4:E2B`** (translation + vision). Some hub builds (e.g. certain `gemma3n` variants) are **text-only** — pick a vision-capable artifact in **Settings** if you switch models.
+**AI Vision OCR** (`ocr.engine`: `ai_vision`) expects a **multimodal** model. Defaults use **`docker.io/ai/gemma4:E2B`** for translation and **`docker.io/ai/gemma4:4B`** for vision OCR. Some hub builds (e.g. certain `gemma3n` variants) are **text-only** — pick a vision-capable artifact in **Settings** if you switch models.
 
 Or use **`start.bat`** if your repo ships it.
 
@@ -104,7 +105,7 @@ Use **Settings** to edit most values. Important OCR-related keys:
   },
   "ai_ocr": {
     "enabled": false,
-    "model": "docker.io/ai/gemma4:E2B",
+    "model": "docker.io/ai/gemma4:4B",
     "debug": false
   },
   "olm_ocr": {
