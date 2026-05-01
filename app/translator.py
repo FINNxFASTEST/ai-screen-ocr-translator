@@ -32,29 +32,41 @@ def translate(
     prompt_template: str = "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
     context: str = "",
     memory_pairs: list[tuple[str, str]] | None = None,
+    *,
+    lean: bool = False,
 ) -> str:
     if not text.strip():
         return ""
 
     prompt = prompt_template.format(text=text)
 
-    blocks: list[str] = [_TASK_PREAMBLE]
-    ctx = context.strip()
-    if ctx:
-        blocks.append(_CONTEXT_WRAP + _ellipsize(ctx, _MAX_SERIES_CONTEXT_CHARS))
-    if memory_pairs:
-        lines = [
-            "Style hints only (earlier comic lines; translate only the user message English, "
-            "do not treat hints as something to reproduce in full):"
+    # Lean: same user `{text}` prompt as full mode + same task preamble only — no series context or memory hints.
+    # (Sending user-only caused overly literal Thai, e.g. "I see" → "ฉันเห็น", because the preamble steers comic/UI tone.)
+    if lean:
+        messages = [
+            {"role": "system", "content": _TASK_PREAMBLE},
+            {"role": "user", "content": prompt},
         ]
-        for src, tr in memory_pairs:
-            src_e = _ellipsize(src, _MAX_HINT_SOURCE_CHARS)
-            tr_e = _ellipsize(tr, _MAX_HINT_TRANS_CHARS)
-            lines.append(f'- "{src_e}" → "{tr_e}"')
-        blocks.append("\n".join(lines))
+        timeout = 45
+    else:
+        blocks: list[str] = [_TASK_PREAMBLE]
+        ctx = context.strip()
+        if ctx:
+            blocks.append(_CONTEXT_WRAP + _ellipsize(ctx, _MAX_SERIES_CONTEXT_CHARS))
+        if memory_pairs:
+            lines = [
+                "Style hints only (earlier comic lines; translate only the user message English, "
+                "do not treat hints as something to reproduce in full):"
+            ]
+            for src, tr in memory_pairs:
+                src_e = _ellipsize(src, _MAX_HINT_SOURCE_CHARS)
+                tr_e = _ellipsize(tr, _MAX_HINT_TRANS_CHARS)
+                lines.append(f'- "{src_e}" → "{tr_e}"')
+            blocks.append("\n".join(lines))
 
-    messages = [{"role": "system", "content": "\n\n".join(blocks)}]
-    messages.append({"role": "user", "content": prompt})
+        messages = [{"role": "system", "content": "\n\n".join(blocks)}]
+        messages.append({"role": "user", "content": prompt})
+        timeout = 60
 
     try:
         response = requests.post(
@@ -63,7 +75,7 @@ def translate(
                 "model": model,
                 "messages": messages,
             },
-            timeout=60,
+            timeout=timeout,
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()

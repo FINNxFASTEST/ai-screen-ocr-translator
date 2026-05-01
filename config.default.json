@@ -34,6 +34,7 @@
   "debug": false,
   "translate": {
     "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+    "quick_translate": false,
     "active_series": "default",
     "series_profiles": {
       "default": {

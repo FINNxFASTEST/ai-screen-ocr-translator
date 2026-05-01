@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
@@ -83,6 +84,18 @@ def _parse_hotkey_or_empty(raw) -> list[set]:
         return []
     groups = parse_hotkey(s)
     return groups if groups else []
+
+
+def _log_debug_timings(debug: bool, label: str, parts: list[tuple[str, float | str]]) -> None:
+    if not debug:
+        return
+    bits: list[str] = []
+    for name, val in parts:
+        if isinstance(val, str):
+            bits.append(f"{name} {val}")
+        else:
+            bits.append(f"{name} {val:.0f} ms")
+    print(f"  [debug] {label}: " + "  ".join(bits))
 
 
 class App:
@@ -195,10 +208,12 @@ class App:
                     self._quit,
                     ai_url=self.config.get("ai_url", "http://localhost:12434"),
                     settings_command=lambda: self.root.after(0, self._open_settings),
-                    popup_quick_append=bool(
-                        self.config.get("popup_quick_append", False)
+                    quick_translate=bool(
+                        (self.config.get("translate") or {}).get(
+                            "quick_translate", False
+                        )
                     ),
-                    on_popup_quick_append_change=self._on_popup_quick_append_bar,
+                    on_quick_translate_change=self._on_quick_translate_bar,
                 )
         else:
             if self._exit_btn is not None:
@@ -209,15 +224,22 @@ class App:
                 self._exit_btn = None
         self._refresh_exit_button_profile()
 
-    def _on_popup_quick_append_bar(self, enabled: bool) -> None:
-        self.config["popup_quick_append"] = bool(enabled)
+    def _on_quick_translate_bar(self, enabled: bool) -> None:
         path = effective_config_path()
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
             data = dict(self.config)
-        data["popup_quick_append"] = bool(enabled)
+        t = data.setdefault("translate", {})
+        if not isinstance(t, dict):
+            t = {}
+            data["translate"] = t
+        t["quick_translate"] = bool(enabled)
+        self.config.setdefault("translate", {})
+        if not isinstance(self.config["translate"], dict):
+            self.config["translate"] = {}
+        self.config["translate"]["quick_translate"] = bool(enabled)
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -286,8 +308,8 @@ class App:
             self._sync_exit_button()
             if self._exit_btn is not None:
                 self._exit_btn.set_ai_url(new_cfg.get("ai_url", "http://localhost:12434"))
-                self._exit_btn.set_popup_quick_append(
-                    bool(new_cfg.get("popup_quick_append", False))
+                self._exit_btn.set_quick_translate(
+                    bool((new_cfg.get("translate") or {}).get("quick_translate", False))
                 )
 
         panel_holder: list = []
@@ -404,9 +426,11 @@ class App:
         debug = bool(self.config.get("debug", False))
         series_key = ""
         spinner = Spinner()
+        t0 = time.perf_counter()
         try:
             spinner.start("Capturing ...")
             image = capture_region(spec)
+            t_after_capture = time.perf_counter()
             self.root.after(0, lambda: self.lens.set_loading(True))
 
             ai_ocr_cfg = self.config.get("ai_ocr", {})
@@ -453,13 +477,32 @@ class App:
                 spinner.update("Reading text ... [PaddleOCR]" if debug else "Reading text ...")
                 original = extract_text(image, ocr_cfg)
 
+            t_after_ocr = time.perf_counter()
+
             if not original or original.startswith("[Error"):
                 spinner.stop("  No text found.")
+                _log_debug_timings(
+                    debug,
+                    "pipeline",
+                    [
+                        ("capture", (t_after_capture - t0) * 1000),
+                        ("ocr", (t_after_ocr - t_after_capture) * 1000),
+                        ("total", (t_after_ocr - t0) * 1000),
+                    ],
+                )
                 self.root.after(0, self._show_empty, cx, cy)
                 return
 
-            spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
             translate_cfg = self.config.get("translate", {})
+            quick = bool(translate_cfg.get("quick_translate", False))
+            if quick:
+                spinner.update(
+                    f"Translating ... [quick / {model}]"
+                    if debug
+                    else "Translating ... [quick]"
+                )
+            else:
+                spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
             prompt_template = translate_cfg.get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
             series_key, context = get_active_series_translation(self.config)
             profile = get_series_profile(self.config, series_key)
@@ -472,7 +515,7 @@ class App:
                 cached = self._memory.get_exact(original, series_key)
                 if cached:
                     spinner.update("Translating ... [memory hit]")
-                else:
+                elif not quick:
                     min_hint = int(mem_cfg.get("min_source_chars_for_hints", 64))
                     memory_pairs = semantic_hints_for_translate(
                         self._memory,
@@ -482,10 +525,22 @@ class App:
                         min_source_chars=min_hint,
                     )
 
+            t_before_translate = time.perf_counter()
+
             if cached:
                 translated = cached
+                t_after_translate = time.perf_counter()
             else:
-                translated = translate(original, ai_url, model, prompt_template, context, memory_pairs)
+                translated = translate(
+                    original,
+                    ai_url,
+                    model,
+                    prompt_template,
+                    "" if quick else context,
+                    None if quick else memory_pairs,
+                    lean=quick,
+                )
+                t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):
                     threading.Thread(
                         target=self._memory.save,
@@ -495,6 +550,22 @@ class App:
 
             preview = original[:48] + ("..." if len(original) > 48 else "")
             spinner.stop(f"  Done  \"{preview}\"")
+            tr_part: tuple[str, float | str]
+            if cached:
+                tr_part = ("translate", "0 ms (memory hit)")
+            else:
+                tr_part = ("translate", (t_after_translate - t_before_translate) * 1000)
+            _log_debug_timings(
+                debug,
+                "pipeline",
+                [
+                    ("capture", (t_after_capture - t0) * 1000),
+                    ("ocr", (t_after_ocr - t_after_capture) * 1000),
+                    ("prep", (t_before_translate - t_after_ocr) * 1000),
+                    tr_part,
+                    ("total", (t_after_translate - t0) * 1000),
+                ],
+            )
 
             self.root.after(
                 0,
@@ -504,6 +575,11 @@ class App:
             )
         except Exception as e:
             spinner.stop(f"  Error: {e}" if debug else "  Something went wrong.")
+            _log_debug_timings(
+                debug,
+                "pipeline (failed)",
+                [("total", (time.perf_counter() - t0) * 1000)],
+            )
             self.root.after(
                 0,
                 lambda err=str(e), x=cx, y=cy, sk=series_key: self._show_popup(
@@ -605,9 +681,11 @@ class App:
         spinner = Spinner()
         debug = bool(self.config.get("debug", False))
         model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
+        t0 = time.perf_counter()
         try:
             spinner.start("Re-translating ...")
             translate_cfg = self.config.get("translate", {})
+            quick = bool(translate_cfg.get("quick_translate", False))
             prompt_template = translate_cfg.get(
                 "prompt",
                 "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
@@ -624,7 +702,7 @@ class App:
                 cached = self._memory.get_exact(original, series_key)
                 if cached:
                     spinner.update("Re-translating ... [memory hit]" if debug else "Re-translating ...")
-                else:
+                elif not quick:
                     min_hint = int(mem_cfg.get("min_source_chars_for_hints", 64))
                     memory_pairs = semantic_hints_for_translate(
                         self._memory,
@@ -634,14 +712,30 @@ class App:
                         min_source_chars=min_hint,
                     )
 
+            t_before_translate = time.perf_counter()
+
             if cached:
                 translated = cached
+                t_after_translate = time.perf_counter()
             else:
                 if debug:
-                    spinner.update(f"Re-translating ... [{model}]")
+                    spinner.update(
+                        f"Re-translating ... [quick / {model}]"
+                        if quick
+                        else f"Re-translating ... [{model}]"
+                    )
+                elif quick:
+                    spinner.update("Re-translating ... [quick]")
                 translated = translate(
-                    original, ai_url, model, prompt_template, context, memory_pairs
+                    original,
+                    ai_url,
+                    model,
+                    prompt_template,
+                    "" if quick else context,
+                    None if quick else memory_pairs,
+                    lean=quick,
                 )
+                t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):
                     threading.Thread(
                         target=self._memory.save,
@@ -651,6 +745,20 @@ class App:
 
             preview = original[:48] + ("..." if len(original) > 48 else "")
             spinner.stop(f"  Re-done  \"{preview}\"")
+            rt_tr: tuple[str, float | str] = (
+                ("translate", "0 ms (memory hit)")
+                if cached
+                else ("translate", (t_after_translate - t_before_translate) * 1000)
+            )
+            _log_debug_timings(
+                debug,
+                "retranslate",
+                [
+                    ("prep", (t_before_translate - t0) * 1000),
+                    rt_tr,
+                    ("total", (t_after_translate - t0) * 1000),
+                ],
+            )
             self.root.after(
                 0,
                 lambda o=original, t=translated, x=cx, y=cy, sk=series_key: self._finish_retranslate(
@@ -659,6 +767,11 @@ class App:
             )
         except Exception as e:
             spinner.stop(f"  Error: {e}" if debug else "  Re-translate failed.")
+            _log_debug_timings(
+                debug,
+                "retranslate (failed)",
+                [("total", (time.perf_counter() - t0) * 1000)],
+            )
             msg = f"[Error: {e}]"
             self.root.after(
                 0,

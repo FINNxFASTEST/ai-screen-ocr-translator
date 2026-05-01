@@ -37,6 +37,20 @@ from app.hotkeys import (
 _ListenCb = Callable[[str], None]
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_effective_config_dict() -> dict:
+    """Same resolution order as app.main.load_config — for merging keys not edited in this panel."""
+    for name in ("config.user.json", "config.default.json", "config.json"):
+        p = _REPO_ROOT / name
+        if p.exists():
+            try:
+                with open(p, encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+    return {}
 
 # tk.Label default fg is often "" before map; config(fg="") can hide text on Windows.
 _SHORTCUT_VALUE_FG = "#1a1a1a"
@@ -2000,6 +2014,9 @@ class ConfigPanel(tk.Toplevel):
         d["translate"]["prompt"] = self.txt_translate.get("1.0", "end").rstrip("\n")
         d["translate"]["context"] = mirror_ctx or ""
         d["translate"]["series_name"] = mirror_sn
+        eff_tr = (_load_effective_config_dict().get("translate") or {})
+        if "quick_translate" in eff_tr:
+            d["translate"]["quick_translate"] = bool(eff_tr["quick_translate"])
 
         ocr_engine = self._ocr_engine_from_ui()
         d["ai_ocr"] = {

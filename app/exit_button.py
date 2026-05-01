@@ -32,13 +32,13 @@ class ExitButton:
         ai_url: str = "http://localhost:12434",
         settings_command=None,
         *,
-        popup_quick_append: bool = False,
-        on_popup_quick_append_change=None,
+        quick_translate: bool = False,
+        on_quick_translate_change=None,
     ):
         self.root = root
         self.on_exit = on_exit
         self.ai_url = ai_url
-        self._on_popup_quick_append_change = on_popup_quick_append_change
+        self._on_quick_translate_change = on_quick_translate_change
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -93,7 +93,7 @@ class ExitButton:
         self._profile_comic_visible = False
 
         self.quick_row = tk.Frame(frame, bg=BG)
-        self.var_quick_translate = tk.BooleanVar(value=bool(popup_quick_append))
+        self.var_quick_translate = tk.BooleanVar(value=bool(quick_translate))
         self.quick_translate_cb = tk.Checkbutton(
             self.quick_row,
             text="Quick translate",
@@ -222,12 +222,12 @@ class ExitButton:
     def set_ai_url(self, url: str):
         self.ai_url = url
 
-    def set_popup_quick_append(self, enabled: bool) -> None:
+    def set_quick_translate(self, enabled: bool) -> None:
         self.var_quick_translate.set(bool(enabled))
 
     def _on_quick_translate_clicked(self) -> None:
-        if self._on_popup_quick_append_change:
-            self._on_popup_quick_append_change(bool(self.var_quick_translate.get()))
+        if self._on_quick_translate_change:
+            self._on_quick_translate_change(bool(self.var_quick_translate.get()))
 
     def set_profile_display(self, profile_line: str, comic_line: str) -> None:
         """Active series profile (above Settings) and optional comic / series name."""
