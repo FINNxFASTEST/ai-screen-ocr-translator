@@ -463,7 +463,7 @@ class App:
                     ai_url,
                 )
             else:
-                spinner.update("Reading text  ->  EasyOCR ...")
+                spinner.update("Reading text  ->  PaddleOCR ...")
                 ocr_cfg = dict(self.config.get("ocr") or {})
                 if not self.config.get("debug", False):
                     ocr_cfg["debug"] = False

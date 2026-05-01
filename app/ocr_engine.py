@@ -1,43 +1,44 @@
-import io
+import os
 import re
-import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
 
-import easyocr
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
-warnings.filterwarnings("ignore", message=".*pin_memory.*", category=UserWarning)
+
+warnings.filterwarnings("ignore")
 
 _reader = None
 _DEBUG_DIR = Path(__file__).resolve().parents[1] / "debug"
 
 # OCR tuning defaults — can be overridden via config.json "ocr" key
 _OCR_DEFAULTS = {
-    "upscale": 2,             # multiply image dimensions before OCR (1 = off)
-    "contrast": 1.8,          # ImageEnhance.Contrast factor (1.0 = unchanged)
-    "sharpness": 2.5,         # ImageEnhance.Sharpness factor (1.0 = unchanged)
-    "binarize": True,         # adaptive threshold — cleans manga speech bubbles
-    "text_threshold": 0.6,    # EasyOCR: confidence threshold for text detection
-    "low_text": 0.4,          # EasyOCR: score for low-confidence text regions
-    "link_threshold": 0.4,    # EasyOCR: threshold for linking character boxes
-    "mag_ratio": 2.0,         # EasyOCR: internal image magnification
-    "min_size": 8,            # EasyOCR: smallest acceptable text height (px)
-    "fix_case": True,         # convert ALL-CAPS manga text to sentence case
+    "upscale": 2,               # multiply image dimensions before OCR (1 = off)
+    "contrast": 1.8,            # ImageEnhance.Contrast factor (1.0 = unchanged)
+    "sharpness": 2.5,           # ImageEnhance.Sharpness factor (1.0 = unchanged)
+    "binarize": True,           # Otsu threshold — cleans manga speech bubbles
+    "text_threshold": 0.3,      # PaddleOCR det_db_thresh: lower = more detections
+    "rec_score_threshold": 0.5, # minimum recognition confidence to keep a line
+    "use_angle_cls": True,      # enable angle classifier for tilted/rotated text
+    "fix_case": True,           # convert ALL-CAPS manga text to sentence case
 }
 
 
-def get_reader() -> easyocr.Reader:
+def get_reader():
     global _reader
     if _reader is None:
-        _sink = io.StringIO()
-        sys.stdout, sys.stderr = _sink, _sink
+        import paddle
         try:
-            _reader = easyocr.Reader(["en"], gpu=False)
-        finally:
-            sys.stdout, sys.stderr = sys.__stdout__, sys.__stderr__
+            paddle.set_flags({"FLAGS_use_mkldnn": False, "FLAGS_enable_pir_api": False})
+        except Exception:
+            pass
+        from paddleocr import PaddleOCR
+        _reader = PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+        )
     return _reader
 
 
@@ -109,11 +110,8 @@ def _fix_case(text: str) -> str:
         return text  # already mixed case — leave untouched
 
     text = text.lower()
-    # Capitalise the very first character
     text = re.sub(r'^([a-z])', lambda m: m.group(1).upper(), text)
-    # Capitalise first letter after sentence-ending punctuation
     text = re.sub(r'([.!?]\s+)([a-z])', lambda m: m.group(1) + m.group(2).upper(), text)
-    # Keep standalone 'i' capitalised
     text = re.sub(r'\bi\b', 'I', text)
     return text
 
@@ -125,13 +123,41 @@ def _save_debug(tag: str, image: Image.Image, label: str) -> None:
     print(f"[DEBUG] saved {path}")
 
 
+def _extract_lines(result, min_score: float) -> list[tuple]:
+    """Normalise PaddleOCR result to [(bbox, text, score)] for both 2.x and 3.x APIs."""
+    if not result:
+        return []
+
+    first = result[0]
+
+    # 3.x: list of dicts with rec_texts / rec_scores / rec_polys
+    if isinstance(first, dict):
+        texts  = first.get("rec_texts")  or first.get("rec_text")   or []
+        scores = first.get("rec_scores") or first.get("rec_score")  or []
+        polys  = first.get("rec_polys")  or first.get("dt_polys")   or []
+        return [
+            (bbox, text, score)
+            for bbox, text, score in zip(polys, texts, scores)
+            if score >= min_score
+        ]
+
+    # 2.x: list of [bbox, (text, score)] or None per page
+    if first is None:
+        return []
+    return [
+        (line[0], line[1][0], line[1][1])
+        for line in first
+        if line[1][1] >= min_score
+    ]
+
+
 def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
     cfg = ocr_config or {}
     debug = cfg.get("debug", False)
 
     reader = get_reader()
 
-    tag = datetime.now().strftime("%H%M%S_%f")[:9]  # e.g. "143052_12"
+    tag = datetime.now().strftime("%H%M%S_%f")[:9]
     if debug:
         _save_debug(tag, image, "1_raw")
 
@@ -142,18 +168,17 @@ def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
 
     img_array = np.array(processed)
 
-    results = reader.readtext(
-        img_array,
-        detail=0,
-        paragraph=True,
-        text_threshold=cfg.get("text_threshold", _OCR_DEFAULTS["text_threshold"]),
-        low_text=cfg.get("low_text", _OCR_DEFAULTS["low_text"]),
-        link_threshold=cfg.get("link_threshold", _OCR_DEFAULTS["link_threshold"]),
-        mag_ratio=cfg.get("mag_ratio", _OCR_DEFAULTS["mag_ratio"]),
-        min_size=cfg.get("min_size", _OCR_DEFAULTS["min_size"]),
-    )
+    # Call without version-specific kwargs — both 2.x and 3.x accept bare img
+    result = reader.ocr(img_array)
 
-    text = " ".join(results).strip()
+    min_score = cfg.get("rec_score_threshold", _OCR_DEFAULTS["rec_score_threshold"])
+    lines = _extract_lines(result, min_score)
+
+    # Sort top-to-bottom so text reads in natural order across speech bubbles
+    lines.sort(key=lambda ln: min(pt[1] for pt in ln[0]))
+
+    texts = [ln[1] for ln in lines]
+    text = " ".join(texts).strip()
     if cfg.get("fix_case", _OCR_DEFAULTS["fix_case"]):
         text = _fix_case(text)
     return text

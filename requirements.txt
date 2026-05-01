@@ -1,4 +1,5 @@
-easyocr
+paddlepaddle
+paddleocr
 mss
 Pillow
 requests
