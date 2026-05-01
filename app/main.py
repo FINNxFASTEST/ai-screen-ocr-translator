@@ -2,6 +2,7 @@ import json
 import threading
 import tkinter as tk
 from pathlib import Path
+from tkinter import messagebox
 
 from pynput import keyboard, mouse
 
@@ -66,25 +67,20 @@ class App:
         self.lens = LensWindow(self.root, self.config)
         self._busy = False
         self._current_popup: TranslationPopup | None = None
+        self._settings_panel = None
 
-        # Exit button (optional)
         self._exit_btn = None
-        if self.config.get("show_exit_button", True):
-            self._exit_btn = ExitButton(
-                self.root,
-                self._quit,
-                ai_url=self.config.get("ai_url", "http://localhost:12434"),
-            )
+        self._sync_exit_button()
 
         # Mouse listener for translate trigger
         self._mouse_listener = mouse.Listener(on_click=self._on_click)
         self._mouse_listener.start()
 
-        # Keyboard listener for exit hotkey
+        # Keyboard listener for exit + settings hotkeys
         self._pressed_keys: set = set()
-        self._exit_groups: list[set] = parse_exit_hotkey(
-            self.config.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")
-        )
+        self._exit_groups: list[set] = []
+        self._settings_groups: list[set] = []
+        self._reload_hotkeys()
         self._kb_listener = keyboard.Listener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,
@@ -93,13 +89,117 @@ class App:
 
         exit_hotkey = self.config.get("exit_hotkey", "<ctrl>+q")
         show_btn = self.config.get("show_exit_button", True)
+        settings_hotkey = self.config.get("settings_hotkey", "f12")
         print("OCR Translator running.")
         print("  Trigger : Middle mouse click")
         print(f"  Exit    : {exit_hotkey}" + (" / red Exit button" if show_btn else ""))
+        print(
+            "  Settings: "
+            + settings_hotkey
+            + (" / Settings button" if show_btn else " (hide control bar)")
+        )
         print(f"  Model   : {self.config.get('model')} @ {self.config.get('ai_url')}")
         print("  Resize  : Left Shift + Scroll wheel\n")
 
         self.root.mainloop()
+
+    def _reload_hotkeys(self) -> None:
+        q = self.config.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")
+        parsed = parse_exit_hotkey(q)
+        self._exit_groups = parsed if parsed else parse_exit_hotkey("<ctrl>+<shift>+<alt>+q")
+        sq = self.config.get("settings_hotkey", "f12")
+        sparsed = parse_exit_hotkey(sq)
+        self._settings_groups = sparsed if sparsed else parse_exit_hotkey("f12")
+
+    def _sync_exit_button(self) -> None:
+        want = self.config.get("show_exit_button", True)
+        if want:
+            if self._exit_btn is None:
+                self._exit_btn = ExitButton(
+                    self.root,
+                    self._quit,
+                    ai_url=self.config.get("ai_url", "http://localhost:12434"),
+                    settings_command=lambda: self.root.after(0, self._open_settings),
+                )
+        else:
+            if self._exit_btn is not None:
+                try:
+                    self._exit_btn.win.destroy()
+                except tk.TclError:
+                    pass
+                self._exit_btn = None
+
+    def _open_settings(self) -> None:
+        try:
+            from app.config_panel import ConfigPanel, _bring_settings_to_foreground
+        except Exception as e:
+            print(f"[Settings] Import failed: {e}")
+            try:
+                messagebox.showerror("Settings", f"Could not load settings panel:\n{e}")
+            except Exception:
+                pass
+            return
+
+        try:
+            snapshot = load_config()
+        except Exception as e:
+            print(f"[Settings] Config load failed: {e}")
+            try:
+                messagebox.showerror("Settings", f"Could not read config.json:\n{e}")
+            except Exception:
+                pass
+            return
+
+        self.lens.hide()
+        if self._exit_btn is not None:
+            self._exit_btn.set_always_on_top(False)
+
+        if self._settings_panel is not None:
+            try:
+                if self._settings_panel.winfo_exists():
+                    _bring_settings_to_foreground(self._settings_panel)
+                    return
+            except tk.TclError:
+                pass
+            self._settings_panel = None
+
+        def on_saved(new_cfg: dict) -> None:
+            self.config = new_cfg
+            self.lens.apply_config(new_cfg)
+            self._reload_hotkeys()
+            self._sync_exit_button()
+            if self._exit_btn is not None:
+                self._exit_btn.set_ai_url(new_cfg.get("ai_url", "http://localhost:12434"))
+
+        panel_holder: list = []
+
+        def _restore_lens_controls() -> None:
+            self.lens.show()
+            self.lens.set_always_on_top(True)
+            if self._exit_btn is not None:
+                self._exit_btn.set_always_on_top(True)
+
+        def _on_panel_destroy(ev=None) -> None:
+            root_panel = panel_holder[0] if panel_holder else None
+            if ev is not None and getattr(ev, "widget", None) is not root_panel:
+                return
+            panel_holder.clear()
+            self._settings_panel = None
+            _restore_lens_controls()
+
+        try:
+            panel = ConfigPanel(self.root, snapshot, on_saved)
+            panel_holder.append(panel)
+            self._settings_panel = panel
+            panel.bind("<Destroy>", _on_panel_destroy)
+        except Exception as e:
+            self._settings_panel = None
+            _restore_lens_controls()
+            print(f"[Settings] Open failed: {e}")
+            try:
+                messagebox.showerror("Settings", f"Could not open settings panel:\n{e}")
+            except Exception:
+                pass
 
     # --- Mouse ---
 
@@ -111,8 +211,14 @@ class App:
 
     def _on_key_press(self, key):
         self._pressed_keys.add(key)
-        # Fire only when every group has at least one key currently held
-        if all(group & self._pressed_keys for group in self._exit_groups):
+        if self._settings_groups and all(
+            group & self._pressed_keys for group in self._settings_groups
+        ):
+            self.root.after(0, self._open_settings)
+            return
+        if self._exit_groups and all(
+            group & self._pressed_keys for group in self._exit_groups
+        ):
             self.root.after(0, self._quit)
 
     def _on_key_release(self, key):

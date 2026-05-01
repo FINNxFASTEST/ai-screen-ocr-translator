@@ -21,7 +21,7 @@ class LensWindow:
     def __init__(self, root: tk.Tk, config: dict):
         self.root = root
         self.radius = config.get("lens_radius", 150)
-        self.color = config.get("lens_color", "#00ff88")
+        self.color = config.get("lens_color", "#ABD7FF")
         self.border_width = config.get("lens_border_width", 3)
 
         size = self.radius * 2 + 20
@@ -57,6 +57,15 @@ class LensWindow:
 
         self._draw_circle()
         self._poll_mouse()
+
+    def apply_config(self, config: dict) -> None:
+        """Resize / restyle lens from saved config (live apply)."""
+        r = int(config.get("lens_radius", self.radius))
+        self.radius = max(MIN_RADIUS, min(MAX_RADIUS, r))
+        self.color = config.get("lens_color", self.color)
+        bw = int(config.get("lens_border_width", self.border_width))
+        self.border_width = max(1, min(20, bw))
+        self.root.after(0, self._draw_circle)
 
     def _make_click_through(self):
         hwnd = ctypes.windll.user32.GetParent(self.win.winfo_id())
@@ -117,3 +126,9 @@ class LensWindow:
 
     def show(self):
         self.win.deiconify()
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        try:
+            self.win.attributes("-topmost", enabled)
+        except tk.TclError:
+            pass

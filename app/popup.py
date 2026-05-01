@@ -1,27 +1,39 @@
 import tkinter as tk
 
-BG_COLOR = "#1e1e1e"
-ORIGINAL_COLOR = "#888888"
-THAI_COLOR = "#ffffff"
-BORDER_COLOR = "#00ff88"
+_DEFAULT_BG = "#1e1e1e"
+_DEFAULT_ORIGINAL = "#888888"
+_DEFAULT_THAI = "#ffffff"
+_DEFAULT_ACCENT = "#00ff88"
 PADDING = 16
-MAX_WIDTH = 480
 
 
 class TranslationPopup:
     def __init__(self, root: tk.Tk, original: str, translated: str,
                  cx: int, cy: int, config: dict):
         self.root = root
-        self.font_size = config.get("popup_font_size", 14)
-        self.auto_close_ms = config.get("popup_auto_close_ms", 15000)
+        self.font_size = int(config.get("popup_font_size", 14))
+        self.auto_close_ms = int(config.get("popup_auto_close_ms", 15000))
+
+        accent = config.get("popup_accent_color", _DEFAULT_ACCENT)
+        bg_col = config.get("popup_bg_color", _DEFAULT_BG)
+        original_fg = config.get("popup_original_fg", _DEFAULT_ORIGINAL)
+        trans_fg = config.get("popup_translation_fg", _DEFAULT_THAI)
+        max_width = int(config.get("popup_max_width", 480))
+        opacity = float(config.get("popup_opacity", 1.0))
+        opacity = max(0.25, min(1.0, opacity))
+
         self._after_id = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.config(bg=BORDER_COLOR)
+        try:
+            self.win.attributes("-alpha", opacity)
+        except tk.TclError:
+            pass
+        self.win.config(bg=accent)
 
-        frame = tk.Frame(self.win, bg=BG_COLOR, padx=PADDING, pady=PADDING)
+        frame = tk.Frame(self.win, bg=bg_col, padx=PADDING, pady=PADDING)
         frame.pack(padx=2, pady=2)
 
         # Original text label
@@ -29,8 +41,8 @@ class TranslationPopup:
             frame,
             text="Original:",
             font=("Segoe UI", self.font_size - 3, "bold"),
-            fg=BORDER_COLOR,
-            bg=BG_COLOR,
+            fg=accent,
+            bg=bg_col,
             anchor="w",
         )
         orig_label.pack(fill=tk.X)
@@ -39,9 +51,9 @@ class TranslationPopup:
             frame,
             text=original or "(no text detected)",
             font=("Segoe UI", self.font_size - 2),
-            fg=ORIGINAL_COLOR,
-            bg=BG_COLOR,
-            wraplength=MAX_WIDTH,
+            fg=original_fg,
+            bg=bg_col,
+            wraplength=max_width,
             justify=tk.LEFT,
             anchor="w",
         )
@@ -52,8 +64,8 @@ class TranslationPopup:
             frame,
             text="Translation:",
             font=("Segoe UI", self.font_size - 3, "bold"),
-            fg=BORDER_COLOR,
-            bg=BG_COLOR,
+            fg=accent,
+            bg=bg_col,
             anchor="w",
         )
         trans_label.pack(fill=tk.X)
@@ -62,9 +74,9 @@ class TranslationPopup:
             frame,
             text=translated or "(no translation)",
             font=("Segoe UI", self.font_size, "bold"),
-            fg=THAI_COLOR,
-            bg=BG_COLOR,
-            wraplength=MAX_WIDTH,
+            fg=trans_fg,
+            bg=bg_col,
+            wraplength=max_width,
             justify=tk.LEFT,
             anchor="w",
         )
@@ -74,8 +86,8 @@ class TranslationPopup:
             frame,
             text="Close  [Esc]",
             font=("Segoe UI", self.font_size - 3),
-            fg=BG_COLOR,
-            bg=BORDER_COLOR,
+            fg=bg_col,
+            bg=accent,
             activebackground="#00cc66",
             relief=tk.FLAT,
             cursor="hand2",

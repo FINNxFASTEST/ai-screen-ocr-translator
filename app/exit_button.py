@@ -15,7 +15,13 @@ STATUS_BUSY = "#888888"
 
 
 class ExitButton:
-    def __init__(self, root: tk.Tk, on_exit, ai_url: str = "http://localhost:12434"):
+    def __init__(
+        self,
+        root: tk.Tk,
+        on_exit,
+        ai_url: str = "http://localhost:12434",
+        settings_command=None,
+    ):
         self.root = root
         self.on_exit = on_exit
         self.ai_url = ai_url
@@ -28,6 +34,23 @@ class ExitButton:
 
         frame = tk.Frame(self.win, bg=BG, padx=6, pady=6)
         frame.pack()
+
+        if settings_command:
+            self.settings_btn = tk.Button(
+                frame,
+                text="Settings",
+                font=("Segoe UI", 9, "bold"),
+                fg=TEXT_COLOR,
+                bg="#3a3a3a",
+                activebackground="#4a4a4a",
+                activeforeground=TEXT_COLOR,
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=10,
+                pady=5,
+                command=settings_command,
+            )
+            self.settings_btn.pack(fill=tk.X, pady=(0, 4))
 
         self.test_btn = tk.Button(
             frame,
@@ -108,6 +131,15 @@ class ExitButton:
 
     def _set_status(self, text: str, color: str):
         self.status_label.config(text=text, fg=color)
+
+    def set_ai_url(self, url: str):
+        self.ai_url = url
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        try:
+            self.win.attributes("-topmost", enabled)
+        except tk.TclError:
+            pass
 
     def _exit(self):
         self.on_exit()
