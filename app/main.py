@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import time
 import tkinter as tk
@@ -86,16 +87,67 @@ def _parse_hotkey_or_empty(raw) -> list[set]:
     return groups if groups else []
 
 
+_ANSI_RESET = "\033[0m"
+_DEBUG_TIMING_COLORS = (
+    "\033[96m",
+    "\033[93m",
+    "\033[95m",
+    "\033[92m",
+    "\033[94m",
+    "\033[91m",
+)
+_cached_stdout_ansi: bool | None = None
+
+
+def _stdout_supports_ansi() -> bool:
+    """True when ANSI colors are safe (TTY + VT on Windows when possible)."""
+    global _cached_stdout_ansi
+    if _cached_stdout_ansi is not None:
+        return _cached_stdout_ansi
+    if not sys.stdout.isatty():
+        _cached_stdout_ansi = False
+        return False
+    if sys.platform != "win32":
+        _cached_stdout_ansi = True
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        STD_OUTPUT_HANDLE = -11
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        h = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        if h in (-1, 0, None):
+            _cached_stdout_ansi = False
+            return False
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+            _cached_stdout_ansi = False
+            return False
+        _cached_stdout_ansi = bool(
+            kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        )
+        return _cached_stdout_ansi
+    except Exception:
+        _cached_stdout_ansi = False
+        return False
+
+
 def _log_debug_timings(debug: bool, label: str, parts: list[tuple[str, float | str]]) -> None:
     if not debug:
         return
-    bits: list[str] = []
-    for name, val in parts:
+    use_color = _stdout_supports_ansi()
+    print(f"  [debug] {label}")
+    for i, (name, val) in enumerate(parts):
         if isinstance(val, str):
-            bits.append(f"{name} {val}")
+            line = f"{name}  {val}"
         else:
-            bits.append(f"{name} {val:.0f} ms")
-    print(f"  [debug] {label}: " + "  ".join(bits))
+            line = f"{name}  {val:.0f} ms"
+        if use_color:
+            c = _DEBUG_TIMING_COLORS[i % len(_DEBUG_TIMING_COLORS)]
+            print(f"      {c}{line}{_ANSI_RESET}")
+        else:
+            print(f"      {line}")
 
 
 class App:

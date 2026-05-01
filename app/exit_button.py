@@ -1,7 +1,46 @@
+import ctypes
+import sys
 import threading
 import tkinter as tk
 
 import requests
+
+
+def _floating_panel_xy(root: tk.Tk, win: tk.Toplevel, margin_x: float = 0.20, margin_y: float = 0.20) -> tuple[int, int]:
+    """Top-left of floating bar at margin_x / margin_y of primary monitor work area (multi-monitor safe on Windows)."""
+    win.update_idletasks()
+    ww = max(win.winfo_reqwidth(), 1)
+    wh = max(win.winfo_reqheight(), 1)
+    if sys.platform == "win32":
+        try:
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            rect = RECT()
+            SPI_GETWORKAREA = 0x0030
+            if ctypes.windll.user32.SystemParametersInfoW(
+                SPI_GETWORKAREA, 0, ctypes.byref(rect), 0
+            ):
+                aw = rect.right - rect.left
+                ah = rect.bottom - rect.top
+                x = rect.left + int(aw * margin_x)
+                y = rect.top + int(ah * margin_y)
+                x = max(rect.left, min(x, rect.right - ww))
+                y = max(rect.top, min(y, rect.bottom - wh))
+                return x, y
+        except Exception:
+            pass
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    x = max(0, min(int(sw * margin_x), sw - ww))
+    y = max(0, min(int(sh * margin_y), sh - wh))
+    return x, y
 
 BG = "#1e1e1e"
 BTN_COLOR = "#ff4444"
@@ -45,7 +84,6 @@ class ExitButton:
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
         self.win.config(bg=BG)
-        self.win.geometry("+20+20")
 
         frame = tk.Frame(self.win, bg=BG, padx=6, pady=6)
         frame.pack()
@@ -186,6 +224,9 @@ class ExitButton:
         self.win.bind("<B1-Motion>", self._drag_move)
         self._drag_x = 0
         self._drag_y = 0
+
+        x, y = _floating_panel_xy(root, self.win)
+        self.win.geometry(f"+{x}+{y}")
 
     def _drag_start(self, event):
         self._drag_x = event.x

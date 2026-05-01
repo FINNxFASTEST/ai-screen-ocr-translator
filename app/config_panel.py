@@ -133,7 +133,7 @@ _OLM_BACKEND_LABELS = (
     "Ollama (local)",
     "OpenAI (ChatGPT API)",
     "Anthropic (Claude)",
-    "Custom server URL (OpenAI-compatible)",
+    "Custom (OpenAI-compatible)",
 )
 _OLM_BACKEND_KEYS = ("inherit", "docker_local", "ollama", "openai", "anthropic", "openai_compat")
 
@@ -671,6 +671,39 @@ class ConfigPanel(tk.Toplevel):
     def _on_translate_provider_changed(self, _evt=None) -> None:
         k = self._translate_provider_key_from_ui()
         self.var_ai_url.set(_TRANSLATE_PROVIDER_DEFAULT_URL.get(k, "http://localhost:12434"))
+
+    def _apply_provider_default_url(self, url_var: tk.StringVar, provider_key: str) -> None:
+        """Set base URL to the canonical default for this backend (same idea as Translation tab)."""
+        if provider_key == "inherit":
+            return
+        url_var.set(_TRANSLATE_PROVIDER_DEFAULT_URL.get(provider_key, "http://localhost:12434"))
+
+    def _sync_ai_ocr_url_entry(self) -> None:
+        """API base URL row follows Translate when backend is 'Same as translation'."""
+        if not getattr(self, "_ent_ai_ocr_url", None):
+            return
+        k = self._ai_ocr_backend_key_from_ui()
+        self._ent_ai_ocr_url.configure(
+            textvariable=self.var_ai_url if k == "inherit" else self.var_ai_ocr_base_url,
+        )
+
+    def _on_ai_ocr_backend_changed(self, _evt=None) -> None:
+        k = self._ai_ocr_backend_key_from_ui()
+        self._apply_provider_default_url(self.var_ai_ocr_base_url, k)
+        self._sync_ai_ocr_url_entry()
+
+    def _sync_olm_url_entry(self) -> None:
+        if not getattr(self, "_ent_olm_url", None):
+            return
+        k = self._olm_backend_key_from_ui()
+        self._ent_olm_url.configure(
+            textvariable=self.var_ai_url if k == "inherit" else self.var_olm_url,
+        )
+
+    def _on_olm_backend_changed(self, _evt=None) -> None:
+        k = self._olm_backend_key_from_ui()
+        self._apply_provider_default_url(self.var_olm_url, k)
+        self._sync_olm_url_entry()
 
     def _ai_runtime_config_snapshot(self) -> dict:
         """Partial config for resolve_translate / chat while the settings panel is open."""
@@ -1516,15 +1549,17 @@ class ConfigPanel(tk.Toplevel):
             row=len(specs) + 2, column=0, sticky="w", pady=(4, 0)
         )
 
-        # --- AI Vision OCR (Docker Model Runner) ---
+        # --- AI Vision OCR (same layout order as AI / Translate: backend → URL → model → key) ---
         af = self._fr_ocr_ai
         ai_int = ai.get("integration") or {}
         ab = _migrate_legacy_ollama_provider_key(str(ai_int.get("provider") or "inherit"))
         if ab not in _AI_OCR_BACKEND_KEYS:
             ab = "inherit"
+        self.var_ai_ocr_base_url = tk.StringVar(value=str(ai_int.get("base_url") or "").strip())
+
         row_ai_be = tk.Frame(af)
-        row_ai_be.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(row_ai_be, text="Vision backend:", width=18, anchor="w").pack(
+        row_ai_be.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(row_ai_be, text="Vision OCR backend:", width=18, anchor="w").pack(
             side=tk.LEFT,
             padx=_SETTINGS_ROW_LABEL_GAP,
         )
@@ -1539,25 +1574,51 @@ class ConfigPanel(tk.Toplevel):
             self._cb_ai_ocr_backend.current(_AI_OCR_BACKEND_KEYS.index(ab))
         except ValueError:
             self._cb_ai_ocr_backend.current(0)
-        self.var_ai_ocr_base_url = tk.StringVar(value=str(ai_int.get("base_url") or "").strip())
-        fr_ai_base = tk.Frame(af)
-        fr_ai_base.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_ai_base, text="API base override:", width=18, anchor="w").pack(
+
+        fr_ai_url = tk.Frame(af)
+        fr_ai_url.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_ai_url, text="API base URL:", width=18, anchor="w").pack(
             side=tk.LEFT,
             padx=_SETTINGS_ROW_LABEL_GAP,
         )
-        tk.Entry(fr_ai_base, textvariable=self.var_ai_ocr_base_url).pack(
-            side=tk.LEFT,
-            fill=tk.X,
-            expand=True,
-        )
+        self._ent_ai_ocr_url = tk.Entry(fr_ai_url, textvariable=self.var_ai_ocr_base_url)
+        self._ent_ai_ocr_url.pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Label(
             af,
-            text="Optional — only when Vision backend is not “Same as translation”. Leave blank to use the Translate tab URL.",
+            text=(
+                "When backend is “Same as translation”, this is the same URL as AI / Translate → API base URL. "
+                "Otherwise it is only used for vision OCR."
+            ),
             fg="#666",
             wraplength=520,
             justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 4))
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.var_ai_ocr_model = tk.StringVar(value=str(ai.get("model", "")))
+        fr_ai = tk.Frame(af)
+        fr_ai.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_ai, text="Vision model:", width=18, anchor="nw").pack(
+            side=tk.LEFT, anchor="n", padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        fr_ai_col = tk.Frame(fr_ai)
+        fr_ai_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        fr_ai_entry = tk.Frame(fr_ai_col)
+        fr_ai_entry.pack(fill=tk.X)
+        tk.Entry(fr_ai_entry, textvariable=self.var_ai_ocr_model).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6)
+        )
+        ttk.Button(
+            fr_ai_entry,
+            text="List models…",
+            command=self._pick_openai_model_ai_ocr,
+        ).pack(side=tk.LEFT)
+
+        ai_key_hint = (
+            "API key for cloud backends only — optional if OPENAI_API_KEY / ANTHROPIC_API_KEY is set. "
+            "Leave blank to keep a previously saved key."
+        )
+        if str(ai_int.get("api_key") or "").strip():
+            ai_key_hint += " (A key is already saved — type a new one to replace.)"
         self.var_ai_ocr_api_key = tk.StringVar(value="")
         fr_ai_key = tk.Frame(af)
         fr_ai_key.pack(fill=tk.X, pady=(0, 6))
@@ -1570,16 +1631,11 @@ class ConfigPanel(tk.Toplevel):
             fill=tk.X,
             expand=True,
         )
-        self.var_ai_ocr_model = tk.StringVar(value=str(ai.get("model", "")))
-        fr_ai = tk.Frame(af)
-        fr_ai.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_ai, text="Vision model:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        tk.Entry(fr_ai, textvariable=self.var_ai_ocr_model).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        ttk.Button(
-            fr_ai,
-            text="List models…",
-            command=self._pick_openai_model_ai_ocr,
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(af, text=ai_key_hint, fg="#666", wraplength=520, justify=tk.LEFT).pack(anchor="w", pady=(0, 4))
+
+        self._cb_ai_ocr_backend.bind("<<ComboboxSelected>>", self._on_ai_ocr_backend_changed)
+        self._sync_ai_ocr_url_entry()
+
         lf_ai = tk.LabelFrame(af, text="Vision OCR prompt")
         lf_ai.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.txt_ai_ocr = ScrolledText(lf_ai, height=8, wrap=tk.WORD, font=("Consolas", 10))
@@ -1590,14 +1646,14 @@ class ConfigPanel(tk.Toplevel):
             anchor="w", pady=(8, 0)
         )
 
-        # --- olmOCR (OpenAI-compatible HTTP) ---
+        # --- olmOCR (OpenAI-compatible HTTP) — same block order as AI / Translate ---
         of = self._fr_ocr_olm
         olm_int = olm.get("integration") or {}
         obm = _migrate_legacy_ollama_provider_key(str(olm_int.get("provider") or "openai_compat"))
         if obm not in _OLM_BACKEND_KEYS:
             obm = "openai_compat"
         row_olm_be = tk.Frame(of)
-        row_olm_be.pack(fill=tk.X, pady=(0, 6))
+        row_olm_be.pack(fill=tk.X, pady=(0, 8))
         tk.Label(row_olm_be, text="olmOCR backend:", width=18, anchor="w").pack(
             side=tk.LEFT,
             padx=_SETTINGS_ROW_LABEL_GAP,
@@ -1613,11 +1669,45 @@ class ConfigPanel(tk.Toplevel):
             self._cb_olm_backend.current(_OLM_BACKEND_KEYS.index(obm))
         except ValueError:
             self._cb_olm_backend.current(_OLM_BACKEND_KEYS.index("openai_compat"))
+
         self.var_olm_url = tk.StringVar(value=str(olm.get("url", "")))
         fr_u = tk.Frame(of)
         fr_u.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_u, text="Server base URL:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        tk.Entry(fr_u, textvariable=self.var_olm_url).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(fr_u, text="API base URL:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self._ent_olm_url = tk.Entry(fr_u, textvariable=self.var_olm_url)
+        self._ent_olm_url.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(
+            of,
+            text=(
+                "When backend is “Same as translation”, this field tracks AI / Translate → API base URL. "
+                "Use Custom (OpenAI-compatible) for a dedicated vLLM / SGLang port."
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.var_olm_model = tk.StringVar(value=str(olm.get("model", "")))
+        fr_m = tk.Frame(of)
+        fr_m.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(fr_m, text="Model:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        tk.Entry(fr_m, textvariable=self.var_olm_model).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(
+            fr_m,
+            text="List models…",
+            command=lambda: self._pick_openai_model(
+                self._olm_list_models_url_var(),
+                self.var_olm_model,
+                self._olm_list_models_key_var(),
+            ),
+        ).pack(side=tk.LEFT)
+
+        olm_key_hint = (
+            "API key for cloud backends only — optional if OPENAI_API_KEY / ANTHROPIC_API_KEY is set. "
+            "Leave blank to keep a previously saved key."
+        )
+        if str(olm.get("api_key") or "").strip():
+            olm_key_hint += " (A key is already saved — type a new one to replace.)"
         self.var_olm_api_key = tk.StringVar(value="")
         fr_olm_key = tk.Frame(of)
         fr_olm_key.pack(fill=tk.X, pady=(0, 6))
@@ -1630,27 +1720,10 @@ class ConfigPanel(tk.Toplevel):
             fill=tk.X,
             expand=True,
         )
-        tk.Label(
-            of,
-            text="For custom vLLM/SGLang, set backend to “Custom server URL” and use the URL above. Leave key blank to keep a saved key.",
-            fg="#666",
-            wraplength=520,
-            justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 4))
-        self.var_olm_model = tk.StringVar(value=str(olm.get("model", "")))
-        fr_m = tk.Frame(of)
-        fr_m.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_m, text="Model id:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        tk.Entry(fr_m, textvariable=self.var_olm_model).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        ttk.Button(
-            fr_m,
-            text="List models…",
-            command=lambda: self._pick_openai_model(
-                self._olm_list_models_url_var(),
-                self.var_olm_model,
-                self._olm_list_models_key_var(),
-            ),
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(of, text=olm_key_hint, fg="#666", wraplength=520, justify=tk.LEFT).pack(anchor="w", pady=(0, 4))
+
+        self._cb_olm_backend.bind("<<ComboboxSelected>>", self._on_olm_backend_changed)
+        self._sync_olm_url_entry()
         lf_olm = tk.LabelFrame(of, text="olmOCR prompt")
         lf_olm.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.txt_olm_ocr = ScrolledText(lf_olm, height=8, wrap=tk.WORD, font=("Consolas", 10))
@@ -2219,9 +2292,10 @@ class ConfigPanel(tk.Toplevel):
 
         ocr_engine = self._ocr_engine_from_ui()
         ai_int: dict = {"provider": self._ai_ocr_backend_key_from_ui()}
-        _bu = self.var_ai_ocr_base_url.get().strip()
-        if _bu:
-            ai_int["base_url"] = _bu
+        if self._ai_ocr_backend_key_from_ui() != "inherit":
+            _bu = self.var_ai_ocr_base_url.get().strip()
+            if _bu:
+                ai_int["base_url"] = _bu
         _ak = self.var_ai_ocr_api_key.get().strip()
         if _ak:
             ai_int["api_key"] = _ak
@@ -2240,8 +2314,14 @@ class ConfigPanel(tk.Toplevel):
         olm_int: dict = {"provider": self._olm_backend_key_from_ui()}
         _old_olm = (self._data.get("olm_ocr") or {})
         _ok = self.var_olm_api_key.get().strip()
+        _olm_backend = self._olm_backend_key_from_ui()
+        _olm_url_saved = (
+            self.var_ai_url.get().strip()
+            if _olm_backend == "inherit"
+            else self.var_olm_url.get().strip()
+        )
         _olm_row = {
-            "url": self.var_olm_url.get().strip(),
+            "url": _olm_url_saved,
             "model": self.var_olm_model.get().strip(),
             "prompt": self.txt_olm_ocr.get("1.0", "end").rstrip("\n"),
             "debug": bool(self.var_olm_debug.get()),
