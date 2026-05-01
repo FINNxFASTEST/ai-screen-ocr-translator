@@ -11,7 +11,38 @@ from tkinter import colorchooser, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable
 
+from app.hotkeys import tk_key_event_to_hotkey, validate_keyboard_hotkey_string
+
+_ListenCb = Callable[[str], None]
+
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+
+_CAPTURE_CUSTOM_LABEL = "Custom keyboard shortcut…"
+
+_CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
+    ("Middle mouse button", "middle_click"),
+    ("Left mouse button", "left_click"),
+    ("Right mouse button", "right_click"),
+    ("Mouse side / back (X1)", "mouse_x1"),
+    ("Mouse side / forward (X2)", "mouse_x2"),
+]
+
+_CAPTURE_LABEL_TO_TOKEN = {label: token for label, token in _CAPTURE_MOUSE_CHOICES}
+_CAPTURE_MOUSE_TOKEN_SET = {token.lower() for _, token in _CAPTURE_MOUSE_CHOICES}.union(
+    {"x1", "x2", "back", "forward"}
+)
+
+
+def _all_mouse_aliases() -> dict[str, str]:
+    """Map lowercase config token → UI label."""
+    aliases: dict[str, str] = {}
+    for label, token in _CAPTURE_MOUSE_CHOICES:
+        aliases[token.lower()] = label
+    aliases["x1"] = "Mouse side / back (X1)"
+    aliases["x2"] = "Mouse side / forward (X2)"
+    aliases["back"] = "Mouse side / back (X1)"
+    aliases["forward"] = "Mouse side / forward (X2)"
+    return aliases
 
 
 def _win32_force_window_visible(hwnd: int) -> None:
@@ -379,25 +410,149 @@ class ConfigPanel(tk.Toplevel):
             anchor="w", pady=(10, 0)
         )
 
+        cap_fr = tk.LabelFrame(tab, text="Capture trigger (run OCR + translate)")
+        cap_fr.pack(fill=tk.X, pady=(10, 0))
+
+        presets = [lbl for lbl, _ in _CAPTURE_MOUSE_CHOICES] + [_CAPTURE_CUSTOM_LABEL]
+        self.var_capture_preset = tk.StringVar()
+        combo = ttk.Combobox(
+            cap_fr,
+            values=presets,
+            textvariable=self.var_capture_preset,
+            state="readonly",
+            width=44,
+        )
+        combo.pack(anchor="w", padx=8, pady=(8, 4))
+        combo.bind("<<ComboboxSelected>>", self._on_capture_preset_changed)
+
+        row_cap = tk.Frame(cap_fr)
+        row_cap.pack(fill=tk.X, padx=8, pady=(0, 8))
+        self.var_capture_display = tk.StringVar()
+        tk.Label(row_cap, textvariable=self.var_capture_display, anchor="w", justify="left").pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+        )
+        ttk.Button(row_cap, text="Listen…", width=12, command=self._listen_capture_hotkey).pack(side=tk.LEFT)
+
+        hk0 = str(self._data.get("hotkey", "middle_click")).strip()
+        aliases = _all_mouse_aliases()
+        preset_label = aliases.get(hk0.lower(), _CAPTURE_CUSTOM_LABEL)
+        self.var_capture_preset.set(preset_label)
+        self._capture_keyboard_value = hk0.strip() if preset_label == _CAPTURE_CUSTOM_LABEL else ""
+        self._refresh_capture_bind_display()
+
+        tk.Label(
+            cap_fr,
+            text="Mouse = one global click; keyboard = chords while the translator runs. Use Listen—no typing shortcuts here.",
+            fg="#555",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
         self.var_exit_hotkey = tk.StringVar(value=str(self._data.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")))
         self.var_settings_hotkey = tk.StringVar(value=str(self._data.get("settings_hotkey", "f12")))
 
-        for label, var in (
-            ("Quit hotkey:", self.var_exit_hotkey),
-            ("Open Settings hotkey:", self.var_settings_hotkey),
-        ):
-            fr = tk.Frame(tab)
-            fr.pack(fill=tk.X, pady=(10, 0))
-            tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
-            tk.Entry(fr, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        hk_fr = tk.LabelFrame(tab, text="Shortcuts (Listen only)")
+        hk_fr.pack(fill=tk.X, pady=(10, 0))
+        self._shortcut_listen_row(hk_fr, "Quit translator:", self.var_exit_hotkey, self._listen_exit_hotkey)
+        self._shortcut_listen_row(hk_fr, "Open Settings:", self.var_settings_hotkey, self._listen_settings_hotkey)
 
         tk.Label(
             tab,
-            text=r"Examples: f12  or  <ctrl>+<alt>+,  (comma as a single key)  —  reachable even if the bar is hidden.",
+            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels.",
             fg="#555",
             wraplength=520,
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(12, 0))
+
+    def _shortcut_listen_row(
+        self,
+        parent: tk.Misc,
+        label: str,
+        display_var: tk.StringVar,
+        listen_cmd: Callable[[], None],
+    ) -> None:
+        fr = tk.Frame(parent)
+        fr.pack(fill=tk.X, padx=8, pady=6)
+        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(fr, textvariable=display_var, anchor="w", justify="left").pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+        )
+        ttk.Button(fr, text="Listen…", width=12, command=listen_cmd).pack(side=tk.RIGHT)
+
+    def _open_key_listen_dialog(self, title: str, on_capture: _ListenCb) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.resizable(False, False)
+        # Two-value -pady on tk.Label is rejected on some Windows Tk builds; use pack(pady=…) instead.
+        tk.Label(
+            dlg,
+            text="Press the shortcut you want.\nEscape cancels.",
+            justify=tk.CENTER,
+            wraplength=360,
+        ).pack(padx=24, pady=(16, 10))
+        tk.Label(dlg, text="Keys are captured in this window.", fg="#777").pack(padx=16, pady=(0, 12))
+
+        def close() -> None:
+            try:
+                dlg.grab_release()
+            except tk.TclError:
+                pass
+            try:
+                dlg.destroy()
+            except tk.TclError:
+                pass
+
+        def on_key(event: tk.Event) -> None:
+            if event.keysym == "Escape":
+                close()
+                return
+            hk = tk_key_event_to_hotkey(event)
+            if hk:
+                on_capture(hk)
+                close()
+
+        dlg.bind("<KeyPress>", on_key)
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.transient(self)
+        dlg.after(80, dlg.grab_set)
+        dlg.after(120, dlg.focus_force)
+
+    def _listen_capture_hotkey(self) -> None:
+        def apply(hk: str) -> None:
+            self._capture_keyboard_value = hk.strip()
+            self.var_capture_preset.set(_CAPTURE_CUSTOM_LABEL)
+            self._refresh_capture_bind_display()
+
+        self._open_key_listen_dialog("Record capture shortcut", apply)
+
+    def _listen_exit_hotkey(self) -> None:
+        def apply(hk: str) -> None:
+            self.var_exit_hotkey.set(hk.strip())
+
+        self._open_key_listen_dialog("Record quit shortcut", apply)
+
+    def _listen_settings_hotkey(self) -> None:
+        def apply(hk: str) -> None:
+            self.var_settings_hotkey.set(hk.strip())
+
+        self._open_key_listen_dialog("Record Settings shortcut", apply)
+
+    def _refresh_capture_bind_display(self) -> None:
+        if self.var_capture_preset.get() == _CAPTURE_CUSTOM_LABEL:
+            inner = self._capture_keyboard_value.strip()
+            shown = inner if inner else "(Press Listen…)"
+        else:
+            shown = "(keyboard not used — mouse preset)"
+        self.var_capture_display.set(shown)
+
+    def _on_capture_preset_changed(self, _evt=None) -> None:
+        self._refresh_capture_bind_display()
+
+    def _capture_hotkey_raw(self) -> str:
+        label = self.var_capture_preset.get()
+        if label == _CAPTURE_CUSTOM_LABEL:
+            return self._capture_keyboard_value.strip()
+        return _CAPTURE_LABEL_TO_TOKEN.get(label, "middle_click")
 
     def _validate(self) -> str | None:
         r = int(self.var_lens_radius.get())
@@ -420,6 +575,20 @@ class ConfigPanel(tk.Toplevel):
         tpl = self.txt_translate.get("1.0", "end")
         if "{text}" not in tpl:
             return 'Translation prompt must include the literal placeholder {text}.'
+        qh = validate_keyboard_hotkey_string(self.var_exit_hotkey.get().strip())
+        if qh:
+            return f"Quit shortcut: {qh}"
+        sh_raw = self.var_settings_hotkey.get().strip()
+        if not sh_raw:
+            return "Settings shortcut missing — use Listen to set it."
+        sh = validate_keyboard_hotkey_string(sh_raw)
+        if sh:
+            return f"Settings shortcut: {sh}"
+        cap = self._capture_hotkey_raw()
+        if cap.lower() not in _CAPTURE_MOUSE_TOKEN_SET:
+            cap_err = validate_keyboard_hotkey_string(cap)
+            if cap_err:
+                return f"Capture trigger: {cap_err}"
         return None
 
     def _assemble_dict(self) -> dict:
@@ -471,6 +640,7 @@ class ConfigPanel(tk.Toplevel):
         d["show_exit_button"] = bool(self.var_show_exit.get())
         d["exit_hotkey"] = self.var_exit_hotkey.get().strip()
         d["settings_hotkey"] = self.var_settings_hotkey.get().strip() or "f12"
+        d["hotkey"] = self._capture_hotkey_raw()
 
         return d
 

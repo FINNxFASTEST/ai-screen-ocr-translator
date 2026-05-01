@@ -9,6 +9,7 @@ from pynput import keyboard, mouse
 from app.ai_ocr import extract_text_ai
 from app.capture import capture_region
 from app.exit_button import ExitButton
+from app.hotkeys import hotkey_readable, parse_hotkey
 from app.lens import LensWindow
 from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
@@ -17,45 +18,34 @@ from app.translator import translate
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
+_CAPTURE_MOUSE_TOKENS: dict[str, mouse.Button] = {
+    "middle_click": mouse.Button.middle,
+    "left_click": mouse.Button.left,
+    "right_click": mouse.Button.right,
+    "mouse_x1": mouse.Button.x1,
+    "mouse_x2": mouse.Button.x2,
+    "back": mouse.Button.x1,
+    "forward": mouse.Button.x2,
+    "x1": mouse.Button.x1,
+    "x2": mouse.Button.x2,
+}
+
+_CAPTURE_MOUSE_READABLE: dict[str, str] = {
+    "middle_click": "Middle mouse button",
+    "left_click": "Left mouse button",
+    "right_click": "Right mouse button",
+    "mouse_x1": "Mouse side / back (X1)",
+    "mouse_x2": "Mouse side / forward (X2)",
+    "x1": "Mouse side / back (X1)",
+    "x2": "Mouse side / forward (X2)",
+    "back": "Mouse side / back (X1)",
+    "forward": "Mouse side / forward (X2)",
+}
+
 
 def load_config() -> dict:
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return json.load(f)
-
-
-_SPECIAL_KEYS = {
-    "ctrl":        (keyboard.Key.ctrl_l,  keyboard.Key.ctrl_r),
-    "shift":       (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift),
-    "alt":         (keyboard.Key.alt_l,   keyboard.Key.alt_r),
-    "scroll_lock": (keyboard.Key.scroll_lock,),
-    "pause":       (keyboard.Key.pause,),
-    "caps_lock":   (keyboard.Key.caps_lock,),
-    **{f"f{n}": (getattr(keyboard.Key, f"f{n}"),) for n in range(1, 21)},
-}
-
-
-def parse_exit_hotkey(hotkey_str: str) -> list[set]:
-    """Parse hotkey string into a list of key groups.
-
-    Each group is a set of acceptable pynput keys for that slot
-    (e.g. ctrl -> {ctrl_l, ctrl_r}). ALL groups must have at least
-    one key pressed for the hotkey to fire.
-
-    Examples: '<ctrl>+<shift>+<alt>+q', '<scroll_lock>', 'f13'
-    """
-    parts = hotkey_str.replace("<", "").replace(">", "").split("+")
-    groups = []
-    for part in parts:
-        part = part.strip().lower()
-        if part in _SPECIAL_KEYS:
-            groups.append(set(_SPECIAL_KEYS[part]))
-        elif len(part) == 1:
-            # Match both char-based and vk-based KeyCode (Windows reports vk when modifiers held)
-            groups.append({
-                keyboard.KeyCode.from_char(part),
-                keyboard.KeyCode(vk=ord(part.upper())),
-            })
-    return groups
 
 
 class App:
@@ -80,6 +70,9 @@ class App:
         self._pressed_keys: set = set()
         self._exit_groups: list[set] = []
         self._settings_groups: list[set] = []
+        self._capture_mode = "mouse"
+        self._capture_button: mouse.Button = mouse.Button.middle
+        self._capture_groups: list[set] = []
         self._reload_hotkeys()
         self._kb_listener = keyboard.Listener(
             on_press=self._on_key_press,
@@ -91,7 +84,11 @@ class App:
         show_btn = self.config.get("show_exit_button", True)
         settings_hotkey = self.config.get("settings_hotkey", "f12")
         print("OCR Translator running.")
-        print("  Trigger : Middle mouse click")
+        trig = hotkey_readable(
+            str(self.config.get("hotkey", "middle_click")),
+            _CAPTURE_MOUSE_READABLE,
+        )
+        print(f"  Capture : {trig}")
         print(f"  Exit    : {exit_hotkey}" + (" / red Exit button" if show_btn else ""))
         print(
             "  Settings: "
@@ -105,11 +102,31 @@ class App:
 
     def _reload_hotkeys(self) -> None:
         q = self.config.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")
-        parsed = parse_exit_hotkey(q)
-        self._exit_groups = parsed if parsed else parse_exit_hotkey("<ctrl>+<shift>+<alt>+q")
+        parsed = parse_hotkey(q)
+        self._exit_groups = parsed if parsed else parse_hotkey("<ctrl>+<shift>+<alt>+q")
         sq = self.config.get("settings_hotkey", "f12")
-        sparsed = parse_exit_hotkey(sq)
-        self._settings_groups = sparsed if sparsed else parse_exit_hotkey("f12")
+        sparsed = parse_hotkey(sq)
+        self._settings_groups = sparsed if sparsed else parse_hotkey("f12")
+        self._reload_capture_trigger()
+
+    def _reload_capture_trigger(self) -> None:
+        raw = str(self.config.get("hotkey", "middle_click")).strip()
+        raw_lc = raw.lower()
+        btn = _CAPTURE_MOUSE_TOKENS.get(raw_lc)
+        if btn is not None:
+            self._capture_mode = "mouse"
+            self._capture_button = btn
+            self._capture_groups = []
+            return
+        groups = parse_hotkey(raw)
+        if groups:
+            self._capture_mode = "keyboard"
+            self._capture_button = mouse.Button.middle
+            self._capture_groups = groups
+            return
+        self._capture_mode = "mouse"
+        self._capture_button = mouse.Button.middle
+        self._capture_groups = []
 
     def _sync_exit_button(self) -> None:
         want = self.config.get("show_exit_button", True)
@@ -204,13 +221,19 @@ class App:
     # --- Mouse ---
 
     def _on_click(self, x, y, button, pressed):
-        if button == mouse.Button.middle and pressed:
+        if not pressed or self._capture_mode != "mouse":
+            return
+        if button == self._capture_button:
             self.root.after(0, self._trigger)
 
     # --- Keyboard (exit hotkey) ---
 
     def _on_key_press(self, key):
         self._pressed_keys.add(key)
+        if self._capture_mode == "keyboard" and self._capture_groups:
+            if all(group & self._pressed_keys for group in self._capture_groups):
+                self.root.after(0, self._trigger)
+                return
         if self._settings_groups and all(
             group & self._pressed_keys for group in self._settings_groups
         ):
