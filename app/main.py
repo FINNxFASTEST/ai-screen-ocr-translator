@@ -9,7 +9,7 @@ from pynput import keyboard, mouse
 from app.ai_ocr import extract_text_ai
 from app.capture import capture_region
 from app.exit_button import ExitButton
-from app.hotkeys import hotkey_readable, parse_hotkey
+from app.hotkeys import hotkey_readable, normalize_lens_wheel_mod, parse_hotkey
 from app.lens import SCROLL_STEP, LensWindow
 from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
@@ -111,13 +111,20 @@ class App:
             + (" / Settings button" if show_btn else " (hide control bar)")
         )
         print(f"  Model   : {self.config.get('model')} @ {self.config.get('ai_url')}")
-        print("  Wheel resize: Alt + scroll → width · Shift + scroll → height")
-        print("                Alt + Shift + scroll → both.")
+        _lw = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_width", "alt"))
+        _lh = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_height", "shift"))
+        if _lw == _lh:
+            _lh = next(t for t in ("shift", "alt", "ctrl", "win") if t != _lw)
+        _LW = {"alt": "Alt", "shift": "Shift", "ctrl": "Ctrl", "win": "Win"}
+        wm_l = _LW[_lw]
+        hm_l = _LW[_lh]
+        print(f"  Wheel resize: {wm_l} + scroll → width · {hm_l} + scroll → height")
+        print(f"                {wm_l} + {hm_l} + scroll → both.")
         wk = str(self.config.get("lens_hotkey_resize_width", "") or "").strip()
         huk = str(self.config.get("lens_hotkey_resize_height_up", "") or "").strip()
         hdk = str(self.config.get("lens_hotkey_resize_height_down", "") or "").strip()
         print(
-            f"  Keyboard width +: {wk or '(unset)'} (+{SCROLL_STEP}px; narrow width: Alt + scroll down)"
+            f"  Keyboard width +: {wk or '(unset)'} (+{SCROLL_STEP}px; narrow width: {wm_l} + scroll down)"
         )
         print(
             f"  Keyboard height : {huk or '(unset)'} + | {hdk or '(unset)'} − "

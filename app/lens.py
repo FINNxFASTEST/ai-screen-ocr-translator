@@ -1,6 +1,7 @@
 import ctypes
 import tkinter as tk
 
+from app.hotkeys import lens_scroll_modifier_key_set, normalize_lens_wheel_mod
 from pynput import keyboard, mouse
 
 # Win32 constants for transparent click-through window
@@ -17,12 +18,6 @@ SCROLL_STEP = 20
 POLL_MS = 30
 MIN_OPACITY = 0.25
 MAX_OPACITY = 1.0
-
-_SHIFT_KEYS = {keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r}
-_ALT_KEYS = {keyboard.Key.alt_l, keyboard.Key.alt_r}
-if hasattr(keyboard.Key, "alt"):
-    _ALT_KEYS.add(keyboard.Key.alt)
-
 
 class LensWindow:
     def __init__(self, root: tk.Tk, config: dict):
@@ -63,9 +58,10 @@ class LensWindow:
         self._make_click_through()
         self._apply_window_opacity()
 
-        self._shift_held = False
-        self._alt_held = False
+        self._width_mod_held = False
+        self._height_mod_held = False
         self._wheel_resize_enabled = True
+        self._reload_wheel_modifiers(config)
         self._kb = keyboard.Listener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,
@@ -116,7 +112,16 @@ class LensWindow:
         bw = int(config.get("lens_border_width", self.border_width))
         self.border_width = max(1, min(20, bw))
         self.opacity = self._clamp_opacity(config.get("lens_opacity", self.opacity))
+        self._reload_wheel_modifiers(config)
         self.root.after(0, self._apply_lens_visuals)
+
+    def _reload_wheel_modifiers(self, config: dict) -> None:
+        w = normalize_lens_wheel_mod(config.get("lens_wheel_mod_width", "alt"))
+        h = normalize_lens_wheel_mod(config.get("lens_wheel_mod_height", "shift"))
+        if w == h:
+            h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
+        self._width_mod_keys = lens_scroll_modifier_key_set(w)
+        self._height_mod_keys = lens_scroll_modifier_key_set(h)
 
     @staticmethod
     def _clamp_opacity(value) -> float:
@@ -180,16 +185,16 @@ class LensWindow:
         self.root.after(POLL_MS, self._poll_mouse)
 
     def _on_key_press(self, key):
-        if key in _SHIFT_KEYS:
-            self._shift_held = True
-        if key in _ALT_KEYS:
-            self._alt_held = True
+        if key in self._width_mod_keys:
+            self._width_mod_held = True
+        if key in self._height_mod_keys:
+            self._height_mod_held = True
 
     def _on_key_release(self, key):
-        if key in _SHIFT_KEYS:
-            self._shift_held = False
-        if key in _ALT_KEYS:
-            self._alt_held = False
+        if key in self._width_mod_keys:
+            self._width_mod_held = False
+        if key in self._height_mod_keys:
+            self._height_mod_held = False
 
     def _on_scroll(self, x, y, dx, dy):
         if not self._wheel_resize_enabled:
@@ -197,20 +202,20 @@ class LensWindow:
         if dy == 0:
             return
         delta = SCROLL_STEP if dy > 0 else -SCROLL_STEP
-        if not self._shift_held and not self._alt_held:
+        if not self._width_mod_held and not self._height_mod_held:
             return
-        if self._shift_held and self._alt_held:
+        if self._width_mod_held and self._height_mod_held:
             self.lens_width = max(
                 MIN_LENS_SIDE, min(MAX_LENS_SIDE, self.lens_width + delta)
             )
             self.lens_height = max(
                 MIN_LENS_SIDE, min(MAX_LENS_SIDE, self.lens_height + delta)
             )
-        elif self._alt_held:
+        elif self._width_mod_held:
             self.lens_width = max(
                 MIN_LENS_SIDE, min(MAX_LENS_SIDE, self.lens_width + delta)
             )
-        elif self._shift_held:
+        elif self._height_mod_held:
             self.lens_height = max(
                 MIN_LENS_SIDE, min(MAX_LENS_SIDE, self.lens_height + delta)
             )

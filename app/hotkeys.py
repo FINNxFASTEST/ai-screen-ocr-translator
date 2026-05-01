@@ -221,3 +221,36 @@ def validate_keyboard_hotkey_string(s: str) -> str | None:
             '"<shift>+<f10>".'
         )
     return None
+
+
+def normalize_lens_wheel_mod(raw: object) -> str:
+    """Config token for which modifier combines with mouse wheel for lens resize (Windows)."""
+    t = str(raw or "alt").strip().lower()
+    if t in ("control",):
+        t = "ctrl"
+    if t in ("windows", "meta"):
+        t = "win"
+    if t not in ("alt", "shift", "ctrl", "win"):
+        return "alt"
+    return t
+
+
+def lens_scroll_modifier_key_set(name: str) -> frozenset:
+    """Pynput keys counted as held for one lens wheel-modifier axis (width or height)."""
+    n = normalize_lens_wheel_mod(name)
+    keys: set = set()
+    if n == "alt":
+        keys.update(_SPECIAL_KEYS["alt"])
+        if hasattr(keyboard.Key, "alt"):
+            keys.add(keyboard.Key.alt)
+    elif n == "shift":
+        keys.update(_SPECIAL_KEYS["shift"])
+    elif n == "ctrl":
+        keys.update(_SPECIAL_KEYS["ctrl"])
+        if hasattr(keyboard.Key, "ctrl"):
+            keys.add(keyboard.Key.ctrl)
+    elif n == "win":
+        for attr in ("cmd", "cmd_l", "cmd_r"):
+            if hasattr(keyboard.Key, attr):
+                keys.add(getattr(keyboard.Key, attr))
+    return frozenset(keys)

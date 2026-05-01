@@ -7,6 +7,8 @@
   "lens_hotkey_resize_width": "<ctrl>+<alt>+bracketright",
   "lens_hotkey_resize_height_up": "<ctrl>+<alt>+equals",
   "lens_hotkey_resize_height_down": "<ctrl>+<alt>+minus",
+  "lens_wheel_mod_width": "win",
+  "lens_wheel_mod_height": "shift",
   "lens_shape": "circle",
   "lens_radius": 70,
   "lens_width": 140,

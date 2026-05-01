@@ -11,7 +11,11 @@ from tkinter import colorchooser, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable
 
-from app.hotkeys import tk_key_event_to_hotkey, validate_keyboard_hotkey_string
+from app.hotkeys import (
+    normalize_lens_wheel_mod,
+    tk_key_event_to_hotkey,
+    validate_keyboard_hotkey_string,
+)
 
 _ListenCb = Callable[[str], None]
 
@@ -345,45 +349,28 @@ class ConfigPanel(tk.Toplevel):
             length=400,
         ).pack(fill=tk.X, padx=8, pady=8)
 
-        hk_r = tk.LabelFrame(tab, text="Keyboard resize (optional, Listen…)")
-        hk_r.pack(fill=tk.X, pady=(8, 0))
-        self.var_lens_hk_resize_w = tk.StringVar(
-            value=str(self._data.get("lens_hotkey_resize_width", "")),
-        )
-        self.var_lens_hk_resize_h_up = tk.StringVar(
-            value=str(self._data.get("lens_hotkey_resize_height_up", "")),
-        )
-        self.var_lens_hk_resize_h_dn = tk.StringVar(
-            value=str(self._data.get("lens_hotkey_resize_height_down", "")),
-        )
-        self._shortcut_listen_row(hk_r, "Widen width (+):", self.var_lens_hk_resize_w, self._listen_lens_hk_resize_w)
-        self._shortcut_listen_row(
-            hk_r, "Height increase (+):", self.var_lens_hk_resize_h_up, self._listen_lens_hk_resize_h_up
-        )
-        self._shortcut_listen_row(
-            hk_r, "Height decrease (-):", self.var_lens_hk_resize_h_dn, self._listen_lens_hk_resize_h_dn
-        )
-        tk.Label(
-            hk_r,
-            text=(
-                "One shortcut widens width only; two shortcuts resize height ±. "
-                "Leave blank to disable. Mouse wheel: Alt+scroll width, Shift+scroll height."
-            ),
-            fg="#666",
-            wraplength=520,
-            justify=tk.LEFT,
-        ).pack(anchor="w", padx=8, pady=(4, 8))
+        if self._lens_only:
+            self._build_lens_resize_hotkeys_ui(tab)
 
         tk.Label(
             tab,
-            text=(
-                "In-app resize (both shapes): Alt+scroll width, Shift+scroll height, "
-                "Alt+Shift+scroll both sides (100–800 px)."
-            ),
+            text=self._lens_wheel_scroll_hint_saved(),
             fg="#666",
             wraplength=520,
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(12, 0))
+
+    def _lens_wheel_scroll_hint_saved(self) -> str:
+        labels = {"alt": "Alt", "shift": "Shift", "ctrl": "Ctrl", "win": "Win"}
+        w = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_width", "alt"))
+        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "shift"))
+        if w == h:
+            h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
+        return (
+            f"In-app resize (both shapes): {labels[w]}+scroll → width · {labels[h]}+scroll → height · "
+            f"{labels[w]}+{labels[h]}+scroll → both sides (100–800 px). "
+            "(Adjust wheel modifiers in General → Lens resize.)"
+        )
 
     def _tab_popup(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, padx=12, pady=12)
@@ -653,6 +640,8 @@ class ConfigPanel(tk.Toplevel):
         self._shortcut_listen_row(hk_fr, "Quick Lens settings:", self.var_lens_settings_hotkey, self._listen_lens_settings_hotkey)
         self._shortcut_listen_row(hk_fr, "Open Settings:", self.var_settings_hotkey, self._listen_settings_hotkey)
 
+        self._build_lens_resize_hotkeys_ui(tab)
+
         tk.Label(
             tab,
             text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels.",
@@ -660,6 +649,86 @@ class ConfigPanel(tk.Toplevel):
             wraplength=520,
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(12, 0))
+
+    def _ensure_lens_wheel_mod_vars(self) -> None:
+        if hasattr(self, "var_lens_wheel_mod_width"):
+            return
+        w = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_width", "alt"))
+        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "shift"))
+        if w == h:
+            h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
+        self.var_lens_wheel_mod_width = tk.StringVar(value=w)
+        self.var_lens_wheel_mod_height = tk.StringVar(value=h)
+
+    def _lens_wheel_mod_row(self, parent: tk.Misc, label: str, token_var: tk.StringVar) -> None:
+        labels = ["Alt", "Shift", "Ctrl", "Win"]
+        tokens = ["alt", "shift", "ctrl", "win"]
+        readable = dict(zip(tokens, labels))
+        token_from_label = dict(zip(labels, tokens))
+
+        fr = tk.Frame(parent)
+        fr.pack(fill=tk.X, padx=8, pady=6)
+        tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
+        cb = ttk.Combobox(fr, values=labels, width=14, state="readonly")
+        cb.set(readable[normalize_lens_wheel_mod(token_var.get())])
+        cb.pack(side=tk.LEFT)
+
+        def on_sel(_evt=None) -> None:
+            lbl = cb.get()
+            tok = token_from_label.get(lbl)
+            if tok:
+                token_var.set(tok)
+
+        cb.bind("<<ComboboxSelected>>", on_sel)
+
+    def _ensure_lens_resize_hotkey_vars(self) -> None:
+        if hasattr(self, "var_lens_hk_resize_w"):
+            return
+        self.var_lens_hk_resize_w = tk.StringVar(
+            value=str(self._data.get("lens_hotkey_resize_width", "")),
+        )
+        self.var_lens_hk_resize_h_up = tk.StringVar(
+            value=str(self._data.get("lens_hotkey_resize_height_up", "")),
+        )
+        self.var_lens_hk_resize_h_dn = tk.StringVar(
+            value=str(self._data.get("lens_hotkey_resize_height_down", "")),
+        )
+
+    def _build_lens_resize_hotkeys_ui(self, parent: tk.Misc) -> None:
+        self._ensure_lens_wheel_mod_vars()
+        self._ensure_lens_resize_hotkey_vars()
+
+        wheel_fr = tk.LabelFrame(parent, text="Lens resize (mouse wheel)")
+        wheel_fr.pack(fill=tk.X, pady=(10, 0))
+        self._lens_wheel_mod_row(wheel_fr, "Hold + scroll → width:", self.var_lens_wheel_mod_width)
+        self._lens_wheel_mod_row(wheel_fr, "Hold + scroll → height:", self.var_lens_wheel_mod_height)
+        tk.Label(
+            wheel_fr,
+            text='Pick two different keys. Holding both together + scroll adjusts width and height at once.',
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(4, 8))
+
+        hk_r = tk.LabelFrame(parent, text="Lens resize (keyboard, optional)")
+        hk_r.pack(fill=tk.X, pady=(10, 0))
+        self._shortcut_listen_row(hk_r, "Widen width (+):", self.var_lens_hk_resize_w, self._listen_lens_hk_resize_w)
+        self._shortcut_listen_row(
+            hk_r, "Height increase (+):", self.var_lens_hk_resize_h_up, self._listen_lens_hk_resize_h_up
+        )
+        self._shortcut_listen_row(
+            hk_r, "Height decrease (-):", self.var_lens_hk_resize_h_dn, self._listen_lens_hk_resize_h_dn
+        )
+        tk.Label(
+            hk_r,
+            text=(
+                "One shortcut widens width only; two shortcuts resize height ±. "
+                "Leave blank to disable. Mouse wheel uses the modifiers chosen above."
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(4, 8))
 
     def _shortcut_listen_row(
         self,
@@ -802,6 +871,13 @@ class ConfigPanel(tk.Toplevel):
             verr = validate_keyboard_hotkey_string(hk_raw)
             if verr:
                 return f"{lbl}: {verr}"
+
+        self._ensure_lens_wheel_mod_vars()
+        wwm = normalize_lens_wheel_mod(self.var_lens_wheel_mod_width.get())
+        whm = normalize_lens_wheel_mod(self.var_lens_wheel_mod_height.get())
+        if wwm == whm:
+            return "Lens mouse wheel: choose two different modifiers for width and height (e.g. Alt and Shift)."
+
         if self._lens_only:
             return None
 
@@ -858,6 +934,14 @@ class ConfigPanel(tk.Toplevel):
         d["lens_hotkey_resize_width"] = self.var_lens_hk_resize_w.get().strip()
         d["lens_hotkey_resize_height_up"] = self.var_lens_hk_resize_h_up.get().strip()
         d["lens_hotkey_resize_height_down"] = self.var_lens_hk_resize_h_dn.get().strip()
+
+        self._ensure_lens_wheel_mod_vars()
+        wm = normalize_lens_wheel_mod(self.var_lens_wheel_mod_width.get())
+        hm = normalize_lens_wheel_mod(self.var_lens_wheel_mod_height.get())
+        if wm == hm:
+            hm = next(t for t in ("shift", "alt", "ctrl", "win") if t != wm)
+        d["lens_wheel_mod_width"] = wm
+        d["lens_wheel_mod_height"] = hm
 
     def _assemble_dict(self) -> dict:
         d = copy.deepcopy(self._data)
