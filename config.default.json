@@ -58,16 +58,6 @@
     "prompt": "Return the plain text shown in this image exactly as written. Do not add explanations, headers, or formatting.",
     "debug": false
   },
-  "olmocr_local": {
-    "url": "http://127.0.0.1:30024",
-    "model": "allenai/olmOCR-2-7B-1025-FP8",
-    "temperature": 0.1,
-    "max_tokens": 8000,
-    "timeout": 300,
-    "api_key": "",
-    "prompt": "",
-    "debug": false
-  },
   "ocr": {
     "engine": "paddleocr",
     "upscale": 2,

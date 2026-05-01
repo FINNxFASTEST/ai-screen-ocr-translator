@@ -12,7 +12,7 @@ Captures text from your screen with a circular or rectangular lens, runs **OCR**
 
 **Optional OCR backends**
 
-- **olmOCR (HTTP)** / **olmOCR (local vLLM)**: OpenAI-compatible server (vLLM, SGLang, etc.). For a ready-made GPU container see [docker-compose.vllm.yml](docker-compose.vllm.yml).
+- **olmOCR (HTTP)** (`ocr.engine`: `olm_ocr`): OpenAI-compatible server (vLLM, SGLang, etc.). For a ready-made GPU container see [docker-compose.vllm.yml](docker-compose.vllm.yml).
 
 ---
 
@@ -36,7 +36,7 @@ Or use **`start.bat`** if your repo ships it.
 
 ### 3. Optional — olmOCR behind vLLM in Docker
 
-The root [docker-compose.yml](docker-compose.yml) is only for **Docker Model Runner**. For **`olmocr_local`** OCR, run vLLM separately:
+The root [docker-compose.yml](docker-compose.yml) is only for **Docker Model Runner**. For **`olm_ocr`** pointing at a local OpenAI-compatible server, you can run vLLM separately:
 
 ```bash
 docker compose -f docker-compose.vllm.yml pull
@@ -84,15 +84,14 @@ Use **Settings** to edit most values. Important OCR-related keys:
 
 | Key | Description |
 |-----|-------------|
-| `ocr.engine` | **`paddleocr`** (local PaddleOCR), **`ai_vision`** (Docker vision chat via `ai_url`), **`olm_ocr`** (OpenAI-compatible server + custom prompt), **`olmocr_local`** (same API, AllenAI YAML v4 prompt / parsing for olm-style models). If missing: falls back from `ai_ocr.enabled`. |
+| `ocr.engine` | **`paddleocr`** (local PaddleOCR), **`ai_vision`** (Docker vision chat via `ai_url`), **`olm_ocr`** (OpenAI-compatible server + custom prompt). If missing: falls back from `ai_ocr.enabled`. |
 | `ocr.*` | Shared image preprocessing (`upscale`, `contrast`, `binarize`, `debug`, etc.). |
 | `ai_url` | Docker Model Runner base URL (translation + AI Vision OCR). |
 | `model` | Translation model id. |
 | `ai_ocr.*` | AI Vision OCR: mirrored **`enabled`** when `ocr.engine` is `ai_vision`; `model`, `prompt`, `debug`. |
-| `olm_ocr.*` | URL, model id, prompt, debug for HTTP olm-style servers. |
-| `olmocr_local.*` | URL, model id, temperature, `max_tokens`, timeout, optional `api_key`, optional prompt override, debug — for **local vLLM** on `127.0.0.1:30024` (or your port). |
+| `olm_ocr.*` | URL, model id, prompt, debug for HTTP olm-style servers; optional `timeout`, `api_key`, `temperature`, `max_tokens` for OpenAI-compatible backends. |
 
-**List models**: In **Settings → OCR**, **List models…** queries `GET /v1/models` on the server URL for AI Vision (**`ai_url`**) / **olm OCR URL** / **olmocr_local URL**.
+**List models**: In **Settings → OCR**, **List models…** queries `GET /v1/models` on the server URL for AI Vision (**`ai_url`**) / **olm OCR URL**.
 
 ### Example snippet
 
@@ -108,7 +107,7 @@ Use **Settings** to edit most values. Important OCR-related keys:
     "model": "docker.io/ai/gemma3:4B-F16",
     "debug": false
   },
-  "olmocr_local": {
+  "olm_ocr": {
     "url": "http://127.0.0.1:30024",
     "model": "olmocr",
     "debug": false
@@ -128,8 +127,7 @@ manga-translator/
 │   ├── capture.py        # Screenshots lens region (mss)
 │   ├── ocr_engine.py     # PaddleOCR + shared preprocess/debug
 │   ├── ai_ocr.py        # Vision OCR → Docker `/v1/chat/completions`
-│   ├── olm_ocr.py        # Generic OpenAI multimodal OCR
-│   ├── olmocr_local.py   # olmOCR YAML v4 + local `/v1` server
+│   ├── olm_ocr.py        # OpenAI-compatible multimodal OCR (HTTP)
 │   ├── translator.py     # Translate via OpenAI-compatible API
 │   ├── popup.py          # Translation popup UI
 │   ├── config_panel.py   # F12 settings (incl. OCR engine tabs)
@@ -137,7 +135,7 @@ manga-translator/
 │   └── ...
 ├── main.py               # Entry: wizard + app.main.run()
 ├── docker-compose.yml    # Docker Model Runner (provider entries)
-├── docker-compose.vllm.yml  # Optional GPU vLLM for olmOCR-local
+├── docker-compose.vllm.yml  # Optional GPU vLLM for olmOCR (HTTP)
 ├── config.default.json   # Default settings template
 ├── config.user.json      # Preferred override (if present)
 └── requirements.txt

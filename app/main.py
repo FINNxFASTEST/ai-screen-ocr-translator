@@ -9,7 +9,6 @@ from pynput import keyboard, mouse
 
 from app.ai_ocr import extract_text_ai
 from app.olm_ocr import extract_text_olm
-from app.olmocr_local import extract_text_olmocr_local
 from app.capture import capture_region
 from app.exit_button import ExitButton
 from app.hotkeys import (
@@ -439,6 +438,10 @@ class App:
 
             ocr_root = self.config.get("ocr") or {}
             engine = str(ocr_root.get("engine") or "").strip().lower()
+            merge_legacy_olm_local = False
+            if engine == "olmocr_local":
+                merge_legacy_olm_local = True
+                engine = "olm_ocr"
             if not engine:
                 engine = "ai_vision" if ai_ocr_cfg.get("enabled", False) else "paddleocr"
 
@@ -457,22 +460,13 @@ class App:
                     ai_url,
                 )
             elif engine == "olm_ocr":
-                olm_cfg = self.config.get("olm_ocr") or {}
+                olm_cfg = dict(self.config.get("olm_ocr") or {})
+                if merge_legacy_olm_local:
+                    olm_cfg = {**(self.config.get("olmocr_local") or {}), **olm_cfg}
                 olm_model = olm_cfg.get("model", "allenai/olmOCR-2-7B-1025")
                 label = f"olmOCR / {olm_model}" if debug else "olmOCR"
                 spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
                 original = extract_text_olm(image, olm_cfg, self.config.get("ocr"), ai_url)
-            elif engine == "olmocr_local":
-                ll_cfg = self.config.get("olmocr_local") or {}
-                ll_model = ll_cfg.get("model", "allenai/olmOCR-2-7B-1025-FP8")
-                label = f"olmOCR-local / {ll_model}" if debug else "olmOCR (local vLLM)"
-                spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
-                original = extract_text_olmocr_local(
-                    image,
-                    ll_cfg,
-                    self.config.get("ocr"),
-                    ai_url,
-                )
             else:
                 spinner.update("Reading text ... [PaddleOCR]" if debug else "Reading text ...")
                 original = extract_text(image, ocr_cfg)

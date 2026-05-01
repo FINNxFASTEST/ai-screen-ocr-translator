@@ -45,30 +45,54 @@ def extract_text_olm(
     model = (olm_cfg.get("model") or _DEFAULTS["model"]).strip() or _DEFAULTS["model"]
     prompt = (olm_cfg.get("prompt") or _DEFAULTS["prompt"]).strip() or _DEFAULTS["prompt"]
 
+    headers: dict[str, str] = {}
+    api_key = str(olm_cfg.get("api_key") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        timeout_sec = int(olm_cfg.get("timeout") or 120)
+    except (TypeError, ValueError):
+        timeout_sec = 120
+    timeout_sec = max(30, timeout_sec)
+
+    body: dict = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    },
+                ],
+            }
+        ],
+    }
+    if "temperature" in olm_cfg:
+        try:
+            body["temperature"] = float(olm_cfg["temperature"])
+        except (TypeError, ValueError):
+            pass
+    if "max_tokens" in olm_cfg:
+        try:
+            body["max_tokens"] = int(olm_cfg["max_tokens"])
+        except (TypeError, ValueError):
+            pass
+
     try:
         resp = requests.post(
             f"{base}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{img_b64}"},
-                            },
-                        ],
-                    }
-                ],
-            },
-            timeout=120,
+            json=body,
+            headers=headers or None,
+            timeout=timeout_sec,
         )
         if not resp.ok:
             try:
-                body = resp.json()
-                err = body.get("error") or body
+                err_payload = resp.json()
+                err = err_payload.get("error") or err_payload
                 msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             except Exception:
                 msg = resp.text.strip() or resp.reason

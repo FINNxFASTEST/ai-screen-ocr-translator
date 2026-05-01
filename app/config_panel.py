@@ -63,9 +63,8 @@ _OCR_ENGINE_LABELS = (
     "PaddleOCR (local)",
     "AI Vision OCR (Docker)",
     "olmOCR (HTTP)",
-    "olmOCR (local vLLM)",
 )
-_OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr", "olmocr_local")
+_OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr")
 
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
@@ -1137,10 +1136,8 @@ class ConfigPanel(tk.Toplevel):
             self._fr_ocr_paddle.pack(fill=tk.BOTH, expand=True)
         elif engine_key == "ai_vision":
             self._fr_ocr_ai.pack(fill=tk.BOTH, expand=True)
-        elif engine_key == "olm_ocr":
-            self._fr_ocr_olm.pack(fill=tk.BOTH, expand=True)
         else:
-            self._fr_ocr_olm_local.pack(fill=tk.BOTH, expand=True)
+            self._fr_ocr_olm.pack(fill=tk.BOTH, expand=True)
 
     def _ocr_engine_from_ui(self) -> str:
         i = self._cb_ocr_engine.current()
@@ -1263,11 +1260,12 @@ class ConfigPanel(tk.Toplevel):
         o = self._data.get("ocr") or {}
         ai = self._data.get("ai_ocr") or {}
         olm = self._data.get("olm_ocr") or {}
-        olm_local = self._data.get("olmocr_local") or {}
 
         engine = str(o.get("engine") or "").strip().lower()
         if not engine:
             engine = "ai_vision" if ai.get("enabled") else "paddleocr"
+        if engine == "olmocr_local":
+            engine = "olm_ocr"
         if engine not in _OCR_ENGINE_KEYS:
             engine = "paddleocr"
 
@@ -1293,12 +1291,10 @@ class ConfigPanel(tk.Toplevel):
         self._fr_ocr_paddle = tk.Frame(body)
         self._fr_ocr_ai = tk.Frame(body)
         self._fr_ocr_olm = tk.Frame(body)
-        self._fr_ocr_olm_local = tk.Frame(body)
         self._ocr_engine_frames = (
             self._fr_ocr_paddle,
             self._fr_ocr_ai,
             self._fr_ocr_olm,
-            self._fr_ocr_olm_local,
         )
 
         # --- PaddleOCR (local): preprocessing tunables ---
@@ -1388,86 +1384,6 @@ class ConfigPanel(tk.Toplevel):
         self.txt_olm_ocr.insert("1.0", olm.get("prompt", ""))
         self.var_olm_debug = tk.BooleanVar(value=bool(olm.get("debug", False)))
         tk.Checkbutton(of, text="olmOCR debug dumps", variable=self.var_olm_debug).pack(anchor="w", pady=(8, 0))
-
-        # --- olmOCR local vLLM (official YAML v4 format; expects OpenAI-compatible server on this PC) ---
-        lf_loc = self._fr_ocr_olm_local
-        self.var_olmocr_local_url = tk.StringVar(value=str(olm_local.get("url", "")))
-        fr_lu = tk.Frame(lf_loc)
-        fr_lu.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_lu, text="Server base URL:", width=18, anchor="w").pack(
-            side=tk.LEFT,
-            padx=_SETTINGS_ROW_LABEL_GAP,
-        )
-        tk.Entry(fr_lu, textvariable=self.var_olmocr_local_url).pack(
-            side=tk.LEFT,
-            fill=tk.X,
-            expand=True,
-        )
-        self.var_olmocr_local_model = tk.StringVar(value=str(olm_local.get("model", "")))
-        fr_lm = tk.Frame(lf_loc)
-        fr_lm.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_lm, text="Model id:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        tk.Entry(fr_lm, textvariable=self.var_olmocr_local_model).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(
-            fr_lm,
-            text="List models…",
-            command=lambda: self._pick_openai_model(
-                self.var_olmocr_local_url,
-                self.var_olmocr_local_model,
-                self.var_olmocr_local_api_key,
-            ),
-        ).pack(side=tk.LEFT, padx=(8, 0))
-        tun = tk.Frame(lf_loc)
-        tun.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(tun, text="temperature:", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        self.var_olmocr_local_temp = tk.DoubleVar(value=float(olm_local.get("temperature", 0.1)))
-        tk.Spinbox(tun, from_=0.0, to=2.0, increment=0.05, textvariable=self.var_olmocr_local_temp, width=12).pack(
-            side=tk.LEFT,
-            padx=(0, 12),
-        )
-        tk.Label(tun, text="max_tokens:", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_olmocr_local_maxtok = tk.IntVar(value=int(olm_local.get("max_tokens", 8000)))
-        tk.Spinbox(tun, from_=512, to=32768, increment=128, textvariable=self.var_olmocr_local_maxtok, width=8).pack(
-            side=tk.LEFT,
-            padx=(4, 0),
-        )
-        fr_lto = tk.Frame(lf_loc)
-        fr_lto.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_lto, text="HTTP timeout (s):", width=18, anchor="w").pack(
-            side=tk.LEFT,
-            padx=_SETTINGS_ROW_LABEL_GAP,
-        )
-        self.var_olmocr_local_timeout = tk.IntVar(value=int(olm_local.get("timeout", 300)))
-        tk.Spinbox(fr_lto, from_=30, to=3600, increment=30, textvariable=self.var_olmocr_local_timeout, width=10).pack(
-            side=tk.LEFT,
-        )
-        fr_lk = tk.Frame(lf_loc)
-        fr_lk.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(fr_lk, text="API key (opt.):", width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
-        self.var_olmocr_local_api_key = tk.StringVar(value=str(olm_local.get("api_key", "")))
-        tk.Entry(fr_lk, textvariable=self.var_olmocr_local_api_key, show="*").pack(
-            side=tk.LEFT,
-            fill=tk.X,
-            expand=True,
-        )
-        lf_prompt_loc = tk.LabelFrame(
-            lf_loc,
-            text="Optional prompt override (empty = official olmOCR YAML v4)",
-        )
-        lf_prompt_loc.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        self.txt_olmocr_local_prompt = ScrolledText(
-            lf_prompt_loc,
-            height=6,
-            wrap=tk.WORD,
-            font=("Consolas", 10),
-        )
-        self.txt_olmocr_local_prompt.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.txt_olmocr_local_prompt.insert("1.0", olm_local.get("prompt", ""))
-        self.var_olmocr_local_debug = tk.BooleanVar(value=bool(olm_local.get("debug", False)))
-        tk.Checkbutton(lf_loc, text="olmOCR-local debug dumps", variable=self.var_olmocr_local_debug).pack(
-            anchor="w",
-            pady=(8, 0),
-        )
 
         def _on_engine(_evt=None):
             self._ocr_swap_panels(self._ocr_engine_from_ui())
@@ -2031,17 +1947,6 @@ class ConfigPanel(tk.Toplevel):
             "model": self.var_olm_model.get().strip(),
             "prompt": self.txt_olm_ocr.get("1.0", "end").rstrip("\n"),
             "debug": bool(self.var_olm_debug.get()),
-        }
-
-        d["olmocr_local"] = {
-            "url": self.var_olmocr_local_url.get().strip(),
-            "model": self.var_olmocr_local_model.get().strip(),
-            "temperature": float(self.var_olmocr_local_temp.get()),
-            "max_tokens": int(self.var_olmocr_local_maxtok.get()),
-            "timeout": int(self.var_olmocr_local_timeout.get()),
-            "api_key": self.var_olmocr_local_api_key.get().strip(),
-            "prompt": self.txt_olmocr_local_prompt.get("1.0", "end").rstrip("\n"),
-            "debug": bool(self.var_olmocr_local_debug.get()),
         }
 
         d["ocr"] = {
