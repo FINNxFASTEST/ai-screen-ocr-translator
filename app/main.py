@@ -22,6 +22,7 @@ from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.translator import translate
 from app.memory import MemoryStore
+from app.series_config import get_active_series_translation
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 USER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
@@ -88,7 +89,11 @@ class App:
         if mem_cfg.get("enabled", False):
             try:
                 self._memory = MemoryStore()
-                print(f"  Memory  : enabled ({self._memory.count()} entries)")
+                sk, _ = get_active_series_translation(self.config)
+                print(
+                    f"  Memory  : enabled ({self._memory.count()} entries; "
+                    f"{self._memory.count(sk)} for active series '{sk}')"
+                )
             except Exception as e:
                 print(f"  Memory  : disabled (import error — {e})")
 
@@ -471,18 +476,18 @@ class App:
             spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
             translate_cfg = self.config.get("translate", {})
             prompt_template = translate_cfg.get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
-            context = translate_cfg.get("context", "")
+            series_key, context = get_active_series_translation(self.config)
 
             mem_cfg = self.config.get("memory", {})
             cached = None
             memory_pairs = None
             if self._memory is not None:
-                cached = self._memory.get_exact(original)
+                cached = self._memory.get_exact(original, series_key)
                 if cached:
                     spinner.update("Translating ... [memory hit]")
                 else:
                     top_k = int(mem_cfg.get("top_k", 3))
-                    memory_pairs = self._memory.search(original, top_k=top_k)
+                    memory_pairs = self._memory.search(original, top_k=top_k, series_key=series_key)
 
             if cached:
                 translated = cached
@@ -491,7 +496,7 @@ class App:
                 if self._memory is not None and not translated.startswith("[Error"):
                     threading.Thread(
                         target=self._memory.save,
-                        args=(original, translated),
+                        args=(original, translated, series_key),
                         daemon=True,
                     ).start()
 

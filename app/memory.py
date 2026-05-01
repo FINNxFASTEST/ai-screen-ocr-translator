@@ -17,35 +17,67 @@ class MemoryStore:
         self._init_db()
 
     def _init_db(self) -> None:
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS translations (
+        cur = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='translations'"
+        )
+        exists = cur.fetchone() is not None
+        if not exists:
+            self._conn.execute("""
+                CREATE TABLE translations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL,
+                    translation TEXT NOT NULL,
+                    embedding BLOB NOT NULL,
+                    series_key TEXT NOT NULL DEFAULT 'default',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source, series_key)
+                )
+            """)
+            self._conn.commit()
+            return
+
+        cols = [row[1] for row in self._conn.execute("PRAGMA table_info(translations)")]
+        if "series_key" in cols:
+            return
+
+        self._conn.executescript("""
+            CREATE TABLE translations_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL,
                 translation TEXT NOT NULL,
                 embedding BLOB NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+                series_key TEXT NOT NULL DEFAULT 'default',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source, series_key)
+            );
+            INSERT INTO translations_new (source, translation, embedding, series_key)
+                SELECT source, translation, embedding, 'default' FROM translations;
+            DROP TABLE translations;
+            ALTER TABLE translations_new RENAME TO translations;
         """)
         self._conn.commit()
 
     def _get_model(self):
         if self._model is None:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
         return self._model
 
     def _embed(self, text: str) -> np.ndarray:
         return self._get_model().encode(text, normalize_embeddings=True).astype(np.float32)
 
-    def get_exact(self, source: str) -> str | None:
+    def get_exact(self, source: str, series_key: str = "default") -> str | None:
         row = self._conn.execute(
-            "SELECT translation FROM translations WHERE source = ?", (source,)
+            "SELECT translation FROM translations WHERE source = ? AND series_key = ?",
+            (source, series_key),
         ).fetchone()
         return row[0] if row else None
 
-    def search(self, text: str, top_k: int = 3) -> list[tuple[str, str]]:
+    def search(self, text: str, top_k: int = 3, series_key: str = "default") -> list[tuple[str, str]]:
         rows = self._conn.execute(
-            "SELECT source, translation, embedding FROM translations"
+            "SELECT source, translation, embedding FROM translations WHERE series_key = ?",
+            (series_key,),
         ).fetchall()
         if not rows:
             return []
@@ -61,19 +93,25 @@ class MemoryStore:
         scored.sort(reverse=True)
         return [(src, tr) for _, src, tr in scored[:top_k]]
 
-    def save(self, source: str, translation: str) -> None:
+    def save(self, source: str, translation: str, series_key: str = "default") -> None:
         emb = self._embed(source)
         with self._lock:
             self._conn.execute(
-                """INSERT INTO translations (source, translation, embedding)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(source) DO UPDATE SET translation=excluded.translation""",
-                (source, translation, emb.tobytes()),
+                """INSERT INTO translations (source, translation, embedding, series_key)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(source, series_key) DO UPDATE SET
+                     translation=excluded.translation,
+                     embedding=excluded.embedding""",
+                (source, translation, emb.tobytes(), series_key),
             )
             self._conn.commit()
 
-    def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM translations").fetchone()[0]
+    def count(self, series_key: str | None = None) -> int:
+        if series_key is None:
+            return self._conn.execute("SELECT COUNT(*) FROM translations").fetchone()[0]
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM translations WHERE series_key = ?", (series_key,)
+        ).fetchone()[0]
 
     def close(self) -> None:
         self._conn.close()

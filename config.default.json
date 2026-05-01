@@ -32,7 +32,15 @@
   "show_exit_button": true,
   "debug": false,
   "translate": {
-    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}"
+    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+    "active_series": "default",
+    "series_profiles": {
+      "default": {
+        "label": "Default",
+        "context": "",
+        "series_name": ""
+      }
+    }
   },
   "ai_ocr": {
     "enabled": false,

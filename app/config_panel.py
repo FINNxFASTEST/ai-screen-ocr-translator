@@ -7,10 +7,18 @@ import json
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable
 
+from app.series_config import (
+    READING_COMBO_NONE,
+    combo_display_for_key,
+    migrate_translate_to_profiles,
+    profile_label,
+    reading_pick_to_series_key,
+    slugify_series_key,
+)
 from app.hotkeys import (
     config_capture_trigger_raw,
     normalize_lens_wheel_mod,
@@ -182,7 +190,9 @@ class ConfigPanel(tk.Toplevel):
         super().__init__(root)
         self._on_save = on_save
         self._data = copy.deepcopy(initial)
+        migrate_translate_to_profiles(self._data.setdefault("translate", {}))
         self._lens_only = panel_mode == "lens_only"
+        self._series_pick_suppress = 0
 
         self.resizable(True, True)
 
@@ -573,6 +583,45 @@ class ConfigPanel(tk.Toplevel):
             tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             tk.Entry(fr, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        td = self._data.get("translate") or {}
+        self._series_profiles: dict[str, dict] = copy.deepcopy(td.get("series_profiles") or {})
+        if not self._series_profiles:
+            self._series_profiles = {
+                "default": {"label": "Default", "context": "", "series_name": ""},
+            }
+        raw_act = td.get("active_series")
+        if isinstance(raw_act, str) and raw_act.strip() == "":
+            self._series_active_key = ""
+        else:
+            self._series_active_key = str(raw_act or "default").strip() or "default"
+            if self._series_active_key not in self._series_profiles:
+                self._series_active_key = next(iter(self._series_profiles.keys()))
+
+        ser_fr = tk.LabelFrame(tab, text="Active manga / series  (separate context & translation memory)")
+        ser_fr.pack(fill=tk.X, pady=(10, 0))
+
+        sr = tk.Frame(ser_fr)
+        sr.pack(fill=tk.X, padx=8, pady=(8, 8))
+        tk.Label(sr, text="Reading:", width=14, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self.var_series_pick = tk.StringVar()
+        self.cmb_series_pick = ttk.Combobox(
+            sr,
+            textvariable=self.var_series_pick,
+            state="readonly",
+            width=40,
+        )
+        self.cmb_series_pick.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        ttk.Button(sr, text="New…", command=self._new_series_profile).pack(side=tk.LEFT)
+        self._btn_series_delete = ttk.Button(sr, text="Delete", command=self._delete_series_profile)
+        self._btn_series_delete.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(
+            ser_fr,
+            text="Choose (none) for generic translation (no saved series context); translation memory uses a separate bucket until you pick a profile. Delete is disabled for (none) and when only one profile remains.",
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
         # --- Series lookup ---
         lookup_lf = tk.LabelFrame(tab, text="Auto-generate context from series name")
         lookup_lf.pack(fill=tk.X, pady=(10, 0))
@@ -605,8 +654,7 @@ class ConfigPanel(tk.Toplevel):
             wraplength=520,
             justify=tk.LEFT,
         ).pack(anchor="w", padx=8, pady=(0, 6))
-        saved_context = (self._data.get("translate") or {}).get("context", "")
-        self.txt_context.insert("1.0", saved_context)
+        self._load_profile_to_editor(self._series_active_key)
 
         lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
         lf.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -618,8 +666,126 @@ class ConfigPanel(tk.Toplevel):
         )
         self.txt_translate.insert("1.0", prompt)
 
+        self.cmb_series_pick.bind("<<ComboboxSelected>>", self._on_series_pick_changed)
+        self._rebuild_series_combo()
+
+    def _sync_series_delete_button(self) -> None:
+        cant_delete = (
+            self._series_active_key == ""
+            or len(self._series_profiles) <= 1
+        )
+        try:
+            self._btn_series_delete.configure(state=("disabled" if cant_delete else "normal"))
+        except tk.TclError:
+            pass
+
+    def _rebuild_series_combo(self) -> None:
+        profiles = self._series_profiles
+        keys = sorted(profiles.keys(), key=lambda k: profile_label(profiles, k).lower())
+        displays = [READING_COMBO_NONE] + [combo_display_for_key(profiles, k) for k in keys]
+        self.cmb_series_pick.configure(values=displays)
+        self._series_pick_suppress += 1
+        try:
+            if self._series_active_key == "":
+                self.var_series_pick.set(READING_COMBO_NONE)
+            else:
+                self.var_series_pick.set(combo_display_for_key(profiles, self._series_active_key))
+        finally:
+            self._series_pick_suppress -= 1
+        self._sync_series_delete_button()
+
+    def _persist_profile_from_editor(self) -> None:
+        if self._series_active_key == "":
+            return
+        ctx = self.txt_context.get("1.0", "end").rstrip("\n")
+        sn = self.var_series_name.get().strip()
+        p = self._series_profiles.get(self._series_active_key)
+        if not isinstance(p, dict):
+            p = {"label": self._series_active_key, "context": ctx, "series_name": sn}
+            self._series_profiles[self._series_active_key] = p
+            return
+        p["context"] = ctx
+        p["series_name"] = sn
+        lab = str(p.get("label", "")).strip()
+        if not lab:
+            p["label"] = sn or self._series_active_key
+
+    def _load_profile_to_editor(self, key: str) -> None:
+        self._series_active_key = key
+        prof = self._series_profiles.get(key)
+        ctx = ""
+        sn = ""
+        if isinstance(prof, dict):
+            ctx = prof.get("context", "") or ""
+            sn = str(prof.get("series_name", "") or "").strip()
+        self.txt_context.delete("1.0", "end")
+        self.txt_context.insert("1.0", ctx)
+        self.var_series_name.set(sn)
+        self._sync_series_delete_button()
+
+    def _on_series_pick_changed(self, _evt=None) -> None:
+        if self._series_pick_suppress:
+            return
+        self._persist_profile_from_editor()
+        parsed = reading_pick_to_series_key(self.var_series_pick.get())
+        if parsed is None:
+            self._rebuild_series_combo()
+            return
+        if parsed != "" and parsed not in self._series_profiles:
+            self._rebuild_series_combo()
+            return
+        if parsed == self._series_active_key:
+            self._sync_series_delete_button()
+            return
+        self._load_profile_to_editor(parsed)
+        self._rebuild_series_combo()
+
+    def _new_series_profile(self) -> None:
+        name = simpledialog.askstring("New series", "Manga / comic name for this profile:", parent=self)
+        if not name or not str(name).strip():
+            return
+        self._persist_profile_from_editor()
+        name = str(name).strip()
+        slug = slugify_series_key(name, frozenset(self._series_profiles.keys()))
+        self._series_profiles[slug] = {"label": name, "context": "", "series_name": name}
+        self._series_active_key = slug
+        self._rebuild_series_combo()
+        self._load_profile_to_editor(slug)
+
+    def _delete_series_profile(self) -> None:
+        if self._series_active_key == "":
+            return
+        if len(self._series_profiles) <= 1:
+            messagebox.showwarning(
+                "Series",
+                "You need at least one series profile.",
+                parent=self,
+            )
+            return
+        lab = profile_label(self._series_profiles, self._series_active_key)
+        if not messagebox.askyesno(
+            "Remove series profile",
+            f'Remove "{lab}" ({self._series_active_key}) from the list?\n\n'
+            "Translation memory rows for this key stay in memory.db.",
+            parent=self,
+        ):
+            return
+        self._persist_profile_from_editor()
+        del self._series_profiles[self._series_active_key]
+        self._series_active_key = sorted(self._series_profiles.keys())[0]
+        self._rebuild_series_combo()
+        self._load_profile_to_editor(self._series_active_key)
+
     def _search_and_fill_context(self) -> None:
         import threading
+
+        if self._series_active_key == "":
+            messagebox.showwarning(
+                "Series name",
+                "Select a manga profile first (Reading), or click New…. (none) has no saved context.",
+                parent=self,
+            )
+            return
 
         name = self.var_series_name.get().strip()
         if not name:
@@ -1305,9 +1471,25 @@ class ConfigPanel(tk.Toplevel):
         d["model"] = self.var_model.get().strip()
 
         d.setdefault("translate", {})
+        self._persist_profile_from_editor()
+        d["translate"]["series_profiles"] = copy.deepcopy(self._series_profiles)
+        d["translate"]["active_series"] = (
+            "" if self._series_active_key == "" else self._series_active_key
+        )
+        if self._series_active_key == "":
+            mirror_ctx = ""
+            mirror_sn = ""
+        else:
+            act = self._series_profiles.get(self._series_active_key)
+            mirror_ctx = act.get("context", "") if isinstance(act, dict) else ""
+            mirror_sn = (
+                str(act.get("series_name", "")).strip()
+                if isinstance(act, dict)
+                else ""
+            )
         d["translate"]["prompt"] = self.txt_translate.get("1.0", "end").rstrip("\n")
-        d["translate"]["context"] = self.txt_context.get("1.0", "end").rstrip("\n")
-        d["translate"]["series_name"] = self.var_series_name.get().strip()
+        d["translate"]["context"] = mirror_ctx or ""
+        d["translate"]["series_name"] = mirror_sn
 
         d["ai_ocr"] = {
             "enabled": bool(self.var_ai_ocr_en.get()),
