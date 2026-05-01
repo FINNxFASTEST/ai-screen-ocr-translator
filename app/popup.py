@@ -7,6 +7,8 @@ _DEFAULT_BG = "#1e1e1e"
 _DEFAULT_THAI = "#ffffff"
 _DEFAULT_ACCENT = "#00ff88"
 _DEFAULT_RADIUS = 6
+_DEFAULT_BORDER_WIDTH = 1
+_MAX_BORDER_WIDTH = 16
 PADDING = 12
 
 
@@ -44,6 +46,8 @@ class TranslationPopup:
         max_width_px = int(config.get("popup_max_width", 480))
         border_radius = int(config.get("popup_border_radius", _DEFAULT_RADIUS))
         border_radius = max(0, min(48, border_radius))
+        border_width = int(config.get("popup_border_width", _DEFAULT_BORDER_WIDTH))
+        border_width = max(0, min(_MAX_BORDER_WIDTH, border_width))
         opacity = float(config.get("popup_opacity", 1.0))
         opacity = max(0.25, min(1.0, opacity))
 
@@ -117,13 +121,17 @@ class TranslationPopup:
         outline = _rgb_tuple(accent)
         pil = Image.new("RGBA", (max(1, card_w), max(1, card_h)), (0, 0, 0, 0))
         draw = ImageDraw.Draw(pil)
-        draw.rounded_rectangle(
-            (0, 0, card_w - 1, card_h - 1),
-            radius=r,
-            fill=fill + (255,),
-            outline=outline + (255,),
-            width=1,
-        )
+        rect = (0, 0, card_w - 1, card_h - 1)
+        if border_width <= 0:
+            draw.rounded_rectangle(rect, radius=r, fill=fill + (255,))
+        else:
+            draw.rounded_rectangle(
+                rect,
+                radius=r,
+                fill=fill + (255,),
+                outline=outline + (255,),
+                width=border_width,
+            )
 
         photo = ImageTk.PhotoImage(pil)
         self._card_photo = photo
