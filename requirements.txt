@@ -1,0 +1,6 @@
+easyocr
+mss
+Pillow
+requests
+pynput
+pyautogui

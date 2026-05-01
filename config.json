@@ -1,0 +1,35 @@
+{
+  "hotkey": "middle_click",
+  "model": "docker.io/ai/gemma3:4B-F16",
+  "ai_url": "http://localhost:12434",
+  "lens_radius": 150,
+  "lens_color": "#00ff88",
+  "lens_border_width": 3,
+  "popup_font_size": 14,
+  "popup_auto_close_ms": 15000,
+  "exit_hotkey": "<ctrl>+<shift>+<alt>+q",
+  "show_exit_button": true,
+  "debug": false,
+  "translate": {
+    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}"
+  },
+  "ai_ocr": {
+    "enabled": true,
+    "model": "docker.io/ai/gemma3n:2B-F16",
+    "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
+    "debug": false
+  },
+  "ocr": {
+    "upscale": 2,
+    "contrast": 1.0,
+    "sharpness": 1.0,
+    "binarize": false,
+    "text_threshold": 0.5,
+    "low_text": 0.3,
+    "link_threshold": 0.3,
+    "mag_ratio": 2.0,
+    "min_size": 8,
+    "fix_case": true,
+    "debug": true
+  }
+}

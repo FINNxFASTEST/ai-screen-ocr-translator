@@ -1,0 +1,18 @@
+# AI coding assistant artifacts
+.cursor/
+.claude/
+.copilot/
+
+# Aider-style files
+.aider*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# OCR debug dumps (when enabled)
+debug/
+

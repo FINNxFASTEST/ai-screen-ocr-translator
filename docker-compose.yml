@@ -1,0 +1,3 @@
+# Docker Model Runner models are pulled via: docker model pull <model>
+# and served automatically by DMR at http://localhost:12434
+# Use start.bat to pull models and launch the app.
