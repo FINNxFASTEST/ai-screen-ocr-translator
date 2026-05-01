@@ -220,12 +220,12 @@ class ConfigPanel(tk.Toplevel):
 
             nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
 
+            self._tab_general(nb)
+            self._tab_ai(nb)
             self._tab_lens(nb)
             self._tab_popup(nb)
-            self._tab_ai(nb)
             self._tab_ai_ocr(nb)
             self._tab_easyocr(nb)
-            self._tab_general(nb)
 
             nb.bind("<<NotebookTabChanged>>", _notebook_scroll_sync)
             self.after(150, _notebook_scroll_sync)
