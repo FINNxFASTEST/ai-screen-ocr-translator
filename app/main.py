@@ -21,6 +21,7 @@ from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.translator import translate
+from app.memory import MemoryStore
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 USER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
@@ -81,6 +82,15 @@ class App:
 
         self._exit_btn = None
         self._sync_exit_button()
+
+        mem_cfg = self.config.get("memory", {})
+        self._memory: MemoryStore | None = None
+        if mem_cfg.get("enabled", False):
+            try:
+                self._memory = MemoryStore()
+                print(f"  Memory  : enabled ({self._memory.count()} entries)")
+            except Exception as e:
+                print(f"  Memory  : disabled (import error — {e})")
 
         # Mouse listener for translate trigger
         self._mouse_listener = mouse.Listener(on_click=self._on_click)
@@ -459,8 +469,31 @@ class App:
                 return
 
             spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
-            prompt_template = self.config.get("translate", {}).get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
-            translated = translate(original, ai_url, model, prompt_template)
+            translate_cfg = self.config.get("translate", {})
+            prompt_template = translate_cfg.get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
+            context = translate_cfg.get("context", "")
+
+            mem_cfg = self.config.get("memory", {})
+            cached = None
+            memory_pairs = None
+            if self._memory is not None:
+                cached = self._memory.get_exact(original)
+                if cached:
+                    spinner.update("Translating ... [memory hit]")
+                else:
+                    top_k = int(mem_cfg.get("top_k", 3))
+                    memory_pairs = self._memory.search(original, top_k=top_k)
+
+            if cached:
+                translated = cached
+            else:
+                translated = translate(original, ai_url, model, prompt_template, context, memory_pairs)
+                if self._memory is not None and not translated.startswith("[Error"):
+                    threading.Thread(
+                        target=self._memory.save,
+                        args=(original, translated),
+                        daemon=True,
+                    ).start()
 
             preview = original[:48] + ("..." if len(original) > 48 else "")
             spinner.stop(f"  Done  \"{preview}\"")

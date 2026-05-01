@@ -573,15 +573,121 @@ class ConfigPanel(tk.Toplevel):
             tk.Label(fr, text=label, width=18, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             tk.Entry(fr, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # --- Series lookup ---
+        lookup_lf = tk.LabelFrame(tab, text="Auto-generate context from series name")
+        lookup_lf.pack(fill=tk.X, pady=(10, 0))
+
+        lookup_row = tk.Frame(lookup_lf)
+        lookup_row.pack(fill=tk.X, padx=8, pady=(8, 4))
+        tk.Label(lookup_row, text="Comic / Series:", width=14, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
+        self.var_series_name = tk.StringVar(value=(self._data.get("translate") or {}).get("series_name", ""))
+        tk.Entry(lookup_row, textvariable=self.var_series_name).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self._btn_search_ctx = ttk.Button(lookup_row, text="Search & Fill Context", command=self._search_and_fill_context)
+        self._btn_search_ctx.pack(side=tk.LEFT)
+
+        tk.Label(
+            lookup_lf,
+            text='Type a series name (e.g. "Spider-Man", "Naruto", "One Piece"), then click Search. The AI will look it up online and write a translation context for you.',
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
+        # --- Context box ---
+        ctx_lf = tk.LabelFrame(tab, text="Series context  (sent to AI as system instructions)")
+        ctx_lf.pack(fill=tk.X, pady=(10, 0))
+        self.txt_context = ScrolledText(ctx_lf, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_context.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        tk.Label(
+            ctx_lf,
+            text='Auto-filled by Search, or edit manually. Leave blank for generic translation.',
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 6))
+        saved_context = (self._data.get("translate") or {}).get("context", "")
+        self.txt_context.insert("1.0", saved_context)
+
         lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
         lf.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        self.txt_translate = ScrolledText(lf, height=11, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_translate = ScrolledText(lf, height=5, wrap=tk.WORD, font=("Consolas", 10))
         self.txt_translate.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         prompt = (self._data.get("translate") or {}).get(
             "prompt",
             "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
         )
         self.txt_translate.insert("1.0", prompt)
+
+    def _search_and_fill_context(self) -> None:
+        import threading
+
+        name = self.var_series_name.get().strip()
+        if not name:
+            messagebox.showwarning("Series name", "Enter a comic or manga series name first.", parent=self)
+            return
+        self._btn_search_ctx.configure(state="disabled", text="Searching…")
+        threading.Thread(target=self._do_search_context, args=(name,), daemon=True).start()
+
+    def _do_search_context(self, name: str) -> None:
+        import requests as req
+
+        wiki_summary = ""
+        try:
+            slug = name.replace(" ", "_")
+            r = req.get(
+                f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}",
+                timeout=10,
+                headers={"User-Agent": "manga-translator-app/1.0"},
+            )
+            if r.status_code == 200:
+                wiki_summary = r.json().get("extract", "")[:1200]
+        except Exception:
+            pass
+
+        if wiki_summary:
+            ai_input = (
+                f'Series: {name}\n\nBackground (Wikipedia):\n{wiki_summary}\n\n'
+                f'Based on this, write a system prompt for an AI translator doing English-to-Thai translations of this series. '
+                f'Structure it in this order:\n'
+                f'1. A 2-3 sentence synopsis of the story so the translator understands the world and plot.\n'
+                f'2. Which character names and special terms to keep in English (or Japanese for manga).\n'
+                f'3. The tone and style of the dialogue.\n'
+                f'4. Any important catchphrases or terminology to handle carefully.\n'
+                f'Keep the total under 250 words. Write only the system prompt text, nothing else.'
+            )
+        else:
+            ai_input = (
+                f'Write a system prompt for an AI translator doing English-to-Thai translations of the "{name}" comic/manga series. '
+                f'Structure it in this order:\n'
+                f'1. A 2-3 sentence synopsis of the story so the translator understands the world and plot.\n'
+                f'2. Which character names and special terms to keep in English (or Japanese for manga).\n'
+                f'3. The tone and style of the dialogue.\n'
+                f'4. Any important catchphrases or terminology to handle carefully.\n'
+                f'Keep the total under 250 words. Write only the system prompt text, nothing else.'
+            )
+
+        try:
+            ai_url = self.var_ai_url.get().strip()
+            model = self.var_model.get().strip()
+            r2 = req.post(
+                f"{ai_url}/v1/chat/completions",
+                json={"model": model, "messages": [{"role": "user", "content": ai_input}]},
+                timeout=90,
+            )
+            r2.raise_for_status()
+            generated = r2.json()["choices"][0]["message"]["content"].strip()
+            self.after(0, self._apply_generated_context, generated)
+        except Exception as e:
+            self.after(0, self._search_context_error, str(e))
+
+    def _apply_generated_context(self, text: str) -> None:
+        self.txt_context.delete("1.0", "end")
+        self.txt_context.insert("1.0", text)
+        self._btn_search_ctx.configure(state="normal", text="Search & Fill Context")
+
+    def _search_context_error(self, msg: str) -> None:
+        self._btn_search_ctx.configure(state="normal", text="Search & Fill Context")
+        messagebox.showerror("Context search failed", f"Could not generate context:\n{msg}", parent=self)
 
     def _tab_ai_ocr(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, padx=12, pady=12)
@@ -1200,6 +1306,8 @@ class ConfigPanel(tk.Toplevel):
 
         d.setdefault("translate", {})
         d["translate"]["prompt"] = self.txt_translate.get("1.0", "end").rstrip("\n")
+        d["translate"]["context"] = self.txt_context.get("1.0", "end").rstrip("\n")
+        d["translate"]["series_name"] = self.var_series_name.get().strip()
 
         d["ai_ocr"] = {
             "enabled": bool(self.var_ai_ocr_en.get()),

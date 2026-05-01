@@ -6,3 +6,5 @@ requests
 pynput
 pyautogui
 wordninja
+sentence-transformers
+numpy

@@ -32,7 +32,8 @@
   "show_exit_button": true,
   "debug": false,
   "translate": {
-    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}"
+    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+    "context": ""
   },
   "ai_ocr": {
     "enabled": false,
@@ -53,5 +54,9 @@
     "fix_case": true,
     "debug": true
   },
-  "setup_done": true
+  "setup_done": true,
+  "memory": {
+    "enabled": true,
+    "top_k": 3
+  }
 }
