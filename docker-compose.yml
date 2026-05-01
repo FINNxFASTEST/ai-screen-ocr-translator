@@ -1,3 +1,12 @@
-# Docker Model Runner models are pulled via: docker model pull <model>
-# and served automatically by DMR at http://localhost:12434
-# Use start.bat to pull models and launch the app.
+services:
+  translate-model:
+    provider:
+      type: model
+      options:
+        model: ${TRANSLATE_MODEL:-docker.io/ai/gemma3:4B-F16}
+
+  ocr-model:
+    provider:
+      type: model
+      options:
+        model: ${OCR_MODEL:-docker.io/ai/gemma3n:2B-F16}
