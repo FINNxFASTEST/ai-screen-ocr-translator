@@ -11,6 +11,17 @@ DEFAULT_SERIES_KEY = "default"
 READING_COMBO_NONE = "(none)"
 
 
+def profile_system_context(profile: dict[str, Any] | None) -> str:
+    """Main series context plus optional glossary, sent as one system message block."""
+    if not isinstance(profile, dict):
+        return ""
+    ctx = str(profile.get("context", "") or "").strip()
+    gloss = str(profile.get("glossary", "") or "").strip()
+    if ctx and gloss:
+        return f"{ctx}\n\n{gloss}"
+    return ctx or gloss
+
+
 def slugify_series_key(name: str, existing_keys: frozenset[str]) -> str:
     base = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "series"
     if base not in existing_keys:
@@ -47,9 +58,40 @@ def migrate_translate_to_profiles(translate: dict[str, Any] | None) -> None:
             "label": label,
             "context": str(legacy_ctx),
             "series_name": legacy_name,
+            "glossary": "",
         }
     }
     translate["active_series"] = DEFAULT_SERIES_KEY
+
+
+def append_translate_profile_note(
+    config: dict[str, Any],
+    series_key: str,
+    field: str,
+    line: str,
+) -> tuple[bool, str]:
+    """Append one non-empty line to profile glossary or series context (mutates config)."""
+    line = line.strip()
+    if not line:
+        return False, "Nothing to append."
+    if field not in ("glossary", "context"):
+        return False, "Invalid save target."
+
+    translate = config.setdefault("translate", {})
+    migrate_translate_to_profiles(translate)
+    profiles = translate.get("series_profiles")
+
+    if not isinstance(profiles, dict) or not profiles:
+        return False, "No series profiles in config."
+    sk = str(series_key or "").strip()
+    if not sk or sk not in profiles:
+        return False, 'Choose an active manga profile in Settings (not "(none)") to save notes.'
+    prof = profiles[sk]
+    if not isinstance(prof, dict):
+        return False, "Invalid profile data."
+    cur = str(prof.get(field, "") or "").rstrip()
+    prof[field] = f"{cur}\n{line}" if cur else line
+    return True, ""
 
 
 def get_active_series_translation(config: dict[str, Any]) -> tuple[str, str]:
@@ -71,10 +113,9 @@ def get_active_series_translation(config: dict[str, Any]) -> tuple[str, str]:
         if active not in profiles:
             active = next(iter(profiles.keys()))
         prof = profiles.get(active)
-        ctx = ""
         if isinstance(prof, dict):
-            ctx = str(prof.get("context", ""))
-        return active, ctx
+            return active, profile_system_context(prof)
+        return active, ""
 
     ctx = str(t.get("context", ""))
     return DEFAULT_SERIES_KEY, ctx

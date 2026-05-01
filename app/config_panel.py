@@ -16,6 +16,7 @@ from app.series_config import (
     combo_display_for_key,
     migrate_translate_to_profiles,
     profile_label,
+    profile_system_context,
     reading_pick_to_series_key,
     slugify_series_key,
 )
@@ -481,6 +482,24 @@ class ConfigPanel(tk.Toplevel):
             justify=tk.LEFT,
         ).pack(anchor="w", padx=8, pady=(0, 4))
 
+        qa_fr = tk.LabelFrame(tab, text="Quick glossary / context from popup")
+        qa_fr.pack(fill=tk.X, pady=(8, 0))
+        self.var_popup_quick_append = tk.BooleanVar(
+            value=bool(self._data.get("popup_quick_append", False)),
+        )
+        tk.Checkbutton(
+            qa_fr,
+            variable=self.var_popup_quick_append,
+            text=(
+                "Translation popups stay minimal; click the + icon (top-right) to open "
+                "Names & glossary / Series context append for the OCR line — active Reading profile only."
+            ),
+            fg="#444",
+            wraplength=500,
+            justify=tk.LEFT,
+            anchor="w",
+        ).pack(anchor="w", padx=8, pady=8)
+
         lay = tk.LabelFrame(tab, text="Layout & rounding")
         lay.pack(fill=tk.X, pady=(8, 0))
 
@@ -587,7 +606,7 @@ class ConfigPanel(tk.Toplevel):
         self._series_profiles: dict[str, dict] = copy.deepcopy(td.get("series_profiles") or {})
         if not self._series_profiles:
             self._series_profiles = {
-                "default": {"label": "Default", "context": "", "series_name": ""},
+                "default": {"label": "Default", "context": "", "series_name": "", "glossary": ""},
             }
         raw_act = td.get("active_series")
         if isinstance(raw_act, str) and raw_act.strip() == "":
@@ -654,6 +673,25 @@ class ConfigPanel(tk.Toplevel):
             wraplength=520,
             justify=tk.LEFT,
         ).pack(anchor="w", padx=8, pady=(0, 6))
+
+        gloss_lf = tk.LabelFrame(
+            tab,
+            text="Names & glossary  (also sent to AI; use for OCR fixes & character spellings)",
+        )
+        gloss_lf.pack(fill=tk.X, pady=(10, 0))
+        self.txt_glossary = ScrolledText(gloss_lf, height=4, wrap=tk.WORD, font=("Consolas", 10))
+        self.txt_glossary.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        tk.Label(
+            gloss_lf,
+            text=(
+                "One line per name or phrase. Example: Kaoru — main character; garbled OCR like "
+                '"if ka or u", "Iwonder…" usually means Kaoru.'
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 6))
+
         self._load_profile_to_editor(self._series_active_key)
 
         lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
@@ -698,14 +736,21 @@ class ConfigPanel(tk.Toplevel):
         if self._series_active_key == "":
             return
         ctx = self.txt_context.get("1.0", "end").rstrip("\n")
+        gloss = self.txt_glossary.get("1.0", "end").rstrip("\n")
         sn = self.var_series_name.get().strip()
         p = self._series_profiles.get(self._series_active_key)
         if not isinstance(p, dict):
-            p = {"label": self._series_active_key, "context": ctx, "series_name": sn}
+            p = {
+                "label": self._series_active_key,
+                "context": ctx,
+                "series_name": sn,
+                "glossary": gloss,
+            }
             self._series_profiles[self._series_active_key] = p
             return
         p["context"] = ctx
         p["series_name"] = sn
+        p["glossary"] = gloss
         lab = str(p.get("label", "")).strip()
         if not lab:
             p["label"] = sn or self._series_active_key
@@ -715,11 +760,15 @@ class ConfigPanel(tk.Toplevel):
         prof = self._series_profiles.get(key)
         ctx = ""
         sn = ""
+        gloss = ""
         if isinstance(prof, dict):
             ctx = prof.get("context", "") or ""
             sn = str(prof.get("series_name", "") or "").strip()
+            gloss = prof.get("glossary", "") or ""
         self.txt_context.delete("1.0", "end")
         self.txt_context.insert("1.0", ctx)
+        self.txt_glossary.delete("1.0", "end")
+        self.txt_glossary.insert("1.0", gloss)
         self.var_series_name.set(sn)
         self._sync_series_delete_button()
 
@@ -747,7 +796,7 @@ class ConfigPanel(tk.Toplevel):
         self._persist_profile_from_editor()
         name = str(name).strip()
         slug = slugify_series_key(name, frozenset(self._series_profiles.keys()))
-        self._series_profiles[slug] = {"label": name, "context": "", "series_name": name}
+        self._series_profiles[slug] = {"label": name, "context": "", "series_name": name, "glossary": ""}
         self._series_active_key = slug
         self._rebuild_series_combo()
         self._load_profile_to_editor(slug)
@@ -1465,6 +1514,7 @@ class ConfigPanel(tk.Toplevel):
         d["popup_wrap_mode"] = self.var_popup_wrap_mode.get().strip().lower()
         d["popup_mouse_offset_x"] = int(self.var_popup_mouse_offset_x.get())
         d["popup_mouse_offset_y"] = int(self.var_popup_mouse_offset_y.get())
+        d["popup_quick_append"] = bool(self.var_popup_quick_append.get())
         d.pop("popup_mouse_gap_px", None)
 
         d["ai_url"] = self.var_ai_url.get().strip()
@@ -1481,7 +1531,7 @@ class ConfigPanel(tk.Toplevel):
             mirror_sn = ""
         else:
             act = self._series_profiles.get(self._series_active_key)
-            mirror_ctx = act.get("context", "") if isinstance(act, dict) else ""
+            mirror_ctx = profile_system_context(act) if isinstance(act, dict) else ""
             mirror_sn = (
                 str(act.get("series_name", "")).strip()
                 if isinstance(act, dict)

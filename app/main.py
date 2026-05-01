@@ -22,7 +22,7 @@ from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.translator import translate
 from app.memory import MemoryStore
-from app.series_config import get_active_series_translation
+from app.series_config import append_translate_profile_note, get_active_series_translation
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 USER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
@@ -59,6 +59,14 @@ def load_config() -> dict:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
     raise FileNotFoundError("No config file found")
+
+
+def effective_config_path() -> Path:
+    """Which config file load_config() reads — used when updating settings from runtime."""
+    for path in (USER_CONFIG_PATH, DEFAULT_CONFIG_PATH, CONFIG_PATH):
+        if path.exists():
+            return path
+    return USER_CONFIG_PATH
 
 
 def _parse_hotkey_or_empty(raw) -> list[set]:
@@ -442,6 +450,7 @@ class App:
         cx = int(spec["cx"])
         cy = int(spec["cy"])
         debug = bool(self.config.get("debug", False))
+        series_key = ""
         spinner = Spinner()
         try:
             spinner.start("Capturing ...")
@@ -503,18 +512,74 @@ class App:
             preview = original[:48] + ("..." if len(original) > 48 else "")
             spinner.stop(f"  Done  \"{preview}\"")
 
-            self.root.after(0, self._show_popup, original, translated, cx, cy)
+            self.root.after(
+                0,
+                lambda o=original, t=translated, x=cx, y=cy, sk=series_key: self._show_popup(
+                    o, t, x, y, sk, quick_note=True
+                ),
+            )
         except Exception as e:
             spinner.stop(f"  Error: {e}" if debug else "  Something went wrong.")
-            self.root.after(0, self._show_popup, "", f"[Error: {e}]", cx, cy)
+            self.root.after(
+                0,
+                lambda err=str(e), x=cx, y=cy, sk=series_key: self._show_popup(
+                    "", f"[Error: {err}]", x, y, sk, quick_note=False
+                ),
+            )
         finally:
             self._busy = False
             self.root.after(0, lambda: self.lens.set_loading(False))
             self.root.after(0, self.lens.show)
 
-    def _show_popup(self, original: str, translated: str, cx: int, cy: int):
+    def _persist_translate_note(self, series_key: str, field: str, line: str) -> str:
+        path = effective_config_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except OSError as e:
+            return f"Could not read config: {e}"
+        except json.JSONDecodeError as e:
+            return f"Invalid config JSON: {e}"
+        ok, err = append_translate_profile_note(data, series_key, field, line)
+        if not ok:
+            return err
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        except OSError as e:
+            return f"Could not save config: {e}"
+        try:
+            self.config = load_config()
+        except Exception:
+            pass
+        return ""
+
+    def _show_popup(
+        self,
+        original: str,
+        translated: str,
+        cx: int,
+        cy: int,
+        series_key: str = "",
+        *,
+        quick_note: bool = True,
+    ):
+        cb = (
+            (lambda f, t, sk=series_key: self._persist_translate_note(sk, f, t))
+            if series_key
+            else None
+        )
         self._current_popup = TranslationPopup(
-            self.root, original, translated, cx, cy, self.config
+            self.root,
+            original,
+            translated,
+            cx,
+            cy,
+            self.config,
+            series_key=series_key,
+            on_quick_append=cb,
+            allow_quick_note=quick_note,
         )
         self.root.after(30, self._raise_current_popup)
 
@@ -523,8 +588,10 @@ class App:
             self.root,
             "(no text detected)",
             "(point the lens at English text and try again)",
-            cx, cy,
+            cx,
+            cy,
             self.config,
+            allow_quick_note=False,
         )
         self.root.after(30, self._raise_current_popup)
         self._busy = False

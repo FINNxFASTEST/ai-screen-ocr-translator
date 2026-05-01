@@ -28,6 +28,7 @@
   "popup_wrap_mode": "word",
   "popup_mouse_offset_x": 55,
   "popup_mouse_offset_y": 55,
+  "popup_quick_append": false,
   "exit_hotkey": "<shift>+q",
   "show_exit_button": true,
   "debug": false,
@@ -38,7 +39,8 @@
       "default": {
         "label": "Default",
         "context": "",
-        "series_name": ""
+        "series_name": "",
+        "glossary": ""
       }
     }
   },
