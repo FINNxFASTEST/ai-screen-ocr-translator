@@ -19,3 +19,6 @@ debug/
 # Local agent instructions
 CLAUDE.md
 
+# Per-machine settings (effective config overrides; see config.default.json)
+config.user.json
+
