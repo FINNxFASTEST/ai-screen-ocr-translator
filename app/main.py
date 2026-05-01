@@ -23,6 +23,8 @@ from app.spinner import Spinner
 from app.translator import translate
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+USER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.default.json"
 
 _CAPTURE_MOUSE_TOKENS: dict[str, mouse.Button] = {
     "middle_click": mouse.Button.middle,
@@ -50,8 +52,11 @@ _CAPTURE_MOUSE_READABLE: dict[str, str] = {
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    for path in (USER_CONFIG_PATH, DEFAULT_CONFIG_PATH, CONFIG_PATH):
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+    raise FileNotFoundError("No config file found")
 
 
 def _parse_hotkey_or_empty(raw) -> list[set]:
@@ -406,7 +411,6 @@ class App:
             return
         self._busy = True
         self.lens.hide()
-        self.lens.set_loading(True)
 
         if self._current_popup:
             self._current_popup.close()
@@ -427,6 +431,7 @@ class App:
         try:
             spinner.start("Capturing ...")
             image = capture_region(spec)
+            self.root.after(0, lambda: self.lens.set_loading(True))
 
             ai_ocr_cfg = self.config.get("ai_ocr", {})
             ai_url = self.config.get("ai_url", "http://localhost:12434")

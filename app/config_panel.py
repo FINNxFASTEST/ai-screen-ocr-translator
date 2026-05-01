@@ -22,7 +22,7 @@ from app.hotkeys import (
 
 _ListenCb = Callable[[str], None]
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
 
 # tk.Label default fg is often "" before map; config(fg="") can hide text on Windows.
 _SHORTCUT_VALUE_FG = "#1a1a1a"

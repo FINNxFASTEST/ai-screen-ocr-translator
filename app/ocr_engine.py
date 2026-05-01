@@ -31,6 +31,7 @@ _OCR_DEFAULTS = {
     "rec_score_threshold": 0.5, # minimum recognition confidence to keep a line
     "use_angle_cls": True,      # enable angle classifier for tilted/rotated text
     "fix_case": True,           # convert ALL-CAPS manga text to sentence case
+    "word_segment": True,       # split merged words like "whywe" → "why we"
 }
 
 
@@ -105,6 +106,43 @@ def _preprocess(image: Image.Image, cfg: dict) -> Image.Image:
     return image.convert("RGB")
 
 
+def _segment_words(text: str) -> str:
+    """Re-insert spaces into merged words produced by OCR (e.g. 'whywe' → 'why we').
+
+    Only tokens that look like merged words are touched: pure-alpha, all-lowercase,
+    longer than 5 chars, and not a known single English word.  Punctuation-bearing
+    tokens (contractions, hyphenated words) are left alone so "that's" stays intact.
+    """
+    try:
+        import wordninja
+    except ImportError:
+        return text
+
+    try:
+        import enchant
+        _dict = enchant.Dict("en_US")
+        def _is_word(w: str) -> bool:
+            return _dict.check(w)
+    except Exception:
+        # Fallback: treat any token wordninja splits into ≥2 parts as merged
+        _is_word = None
+
+    tokens = text.split(" ")
+    out = []
+    for tok in tokens:
+        # Only attempt segmentation on plain lowercase alpha tokens long enough
+        # to plausibly contain two words (5+ chars), skipping contractions etc.
+        if len(tok) >= 5 and tok.isalpha() and tok == tok.lower():
+            if _is_word is not None and _is_word(tok):
+                out.append(tok)  # already a valid single word
+            else:
+                parts = wordninja.split(tok)
+                out.append(" ".join(parts) if len(parts) > 1 else tok)
+        else:
+            out.append(tok)
+    return " ".join(out)
+
+
 def _fix_case(text: str) -> str:
     """Convert ALL-CAPS manga text to sentence case.
 
@@ -163,6 +201,18 @@ def _extract_lines(result, min_score: float) -> list[tuple]:
     ]
 
 
+def _join_lines(lines: list[str]) -> str:
+    result = ""
+    for i, line in enumerate(lines):
+        if i == 0:
+            result = line
+        elif result.endswith("-"):
+            result = result[:-1] + line
+        else:
+            result = result + " " + line
+    return result.strip()
+
+
 def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
     cfg = ocr_config or {}
     debug = cfg.get("debug", False)
@@ -190,7 +240,9 @@ def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
     lines.sort(key=lambda ln: min(pt[1] for pt in ln[0]))
 
     texts = [ln[1] for ln in lines]
-    text = " ".join(texts).strip()
+    text = _join_lines(texts)
     if cfg.get("fix_case", _OCR_DEFAULTS["fix_case"]):
         text = _fix_case(text)
+    if cfg.get("word_segment", _OCR_DEFAULTS["word_segment"]):
+        text = _segment_words(text)
     return text

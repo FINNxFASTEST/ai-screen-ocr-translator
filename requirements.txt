@@ -5,3 +5,4 @@ Pillow
 requests
 pynput
 pyautogui
+wordninja
