@@ -16,3 +16,6 @@ venv/
 # OCR debug dumps (when enabled)
 debug/
 
+# Local agent instructions
+CLAUDE.md
+
