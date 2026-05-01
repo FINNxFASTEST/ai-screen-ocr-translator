@@ -165,6 +165,19 @@ class ConfigPanel(tk.Toplevel):
             anchor="w", padx=10, pady=8
         )
 
+        op_fr = tk.LabelFrame(tab, text="Lens opacity")
+        op_fr.pack(fill=tk.X, pady=(8, 0))
+        self.var_lens_opacity = tk.DoubleVar(value=float(self._data.get("lens_opacity", 1.0)))
+        tk.Scale(
+            op_fr,
+            variable=self.var_lens_opacity,
+            orient=tk.HORIZONTAL,
+            from_=0.4,
+            to=1.0,
+            resolution=0.05,
+            length=400,
+        ).pack(fill=tk.X, padx=8, pady=8)
+
         tk.Label(
             tab,
             text="In-app: hold Shift and scroll wheel to resize lens (50–400 px). Save applies startup default.",
@@ -202,6 +215,38 @@ class ConfigPanel(tk.Toplevel):
             side=tk.LEFT
         )
 
+        lay = tk.LabelFrame(tab, text="Layout & rounding")
+        lay.pack(fill=tk.X, pady=(8, 0))
+
+        row_r = tk.Frame(lay)
+        row_r.pack(fill=tk.X, padx=8, pady=6)
+        tk.Label(row_r, text="Corner radius (px):", width=14, anchor="w").pack(side=tk.LEFT)
+        self.var_popup_border_radius = tk.IntVar(value=int(self._data.get("popup_border_radius", 6)))
+        tk.Spinbox(row_r, from_=0, to=48, textvariable=self.var_popup_border_radius, width=8).pack(side=tk.LEFT)
+
+        row_wb = tk.Frame(lay)
+        row_wb.pack(fill=tk.X, padx=8, pady=(0, 8))
+        tk.Label(row_wb, text="Word break:", width=14, anchor="w").pack(side=tk.LEFT)
+        wm = str(self._data.get("popup_wrap_mode", "word")).strip().lower()
+        if wm != "char":
+            wm = "word"
+        self.var_popup_wrap_mode = tk.StringVar(value=wm)
+        ttk.Combobox(
+            row_wb,
+            textvariable=self.var_popup_wrap_mode,
+            values=("word", "char"),
+            state="readonly",
+            width=10,
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            lay,
+            text='"word": wrap between words. "char": wrap anywhere (narrow columns, long unbroken Thai).',
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 6))
+
         op_fr = tk.LabelFrame(tab, text="Window opacity")
         op_fr.pack(fill=tk.X, pady=(4, 8))
         self.var_popup_opacity = tk.DoubleVar(value=float(self._data.get("popup_opacity", 1.0)))
@@ -215,15 +260,16 @@ class ConfigPanel(tk.Toplevel):
             length=400,
         ).pack(fill=tk.X, padx=8, pady=8)
 
+        col_fr = tk.LabelFrame(tab, text="Colors")
+        col_fr.pack(fill=tk.X, pady=(0, 8))
+
         self.var_popup_bg = tk.StringVar(value=str(self._data.get("popup_bg_color", "#1e1e1e")))
         self.var_popup_accent = tk.StringVar(value=str(self._data.get("popup_accent_color", "#00ff88")))
-        self.var_popup_orig = tk.StringVar(value=str(self._data.get("popup_original_fg", "#888888")))
         self.var_popup_trans = tk.StringVar(value=str(self._data.get("popup_translation_fg", "#ffffff")))
 
-        self._color_picker_row(tab, "Background:", self.var_popup_bg)
-        self._color_picker_row(tab, "Accent / headings:", self.var_popup_accent)
-        self._color_picker_row(tab, "Original text:", self.var_popup_orig)
-        self._color_picker_row(tab, "Translation text:", self.var_popup_trans)
+        self._color_picker_row(col_fr, "Background:", self.var_popup_bg)
+        self._color_picker_row(col_fr, "Outer border:", self.var_popup_accent)
+        self._color_picker_row(col_fr, "Text:", self.var_popup_trans)
 
     def _tab_ai(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, padx=12, pady=12)
@@ -357,9 +403,18 @@ class ConfigPanel(tk.Toplevel):
         r = int(self.var_lens_radius.get())
         if r < 50 or r > 400:
             return "Lens radius must be between 50 and 400."
+        lo = float(self.var_lens_opacity.get())
+        if lo < 0.25 or lo > 1.0:
+            return "Lens opacity must be between 0.25 and 1.0."
         op = float(self.var_popup_opacity.get())
         if op < 0.25 or op > 1.0:
             return "Popup opacity must be between 0.25 and 1.0."
+        rb = int(self.var_popup_border_radius.get())
+        if rb < 0 or rb > 48:
+            return "Popup corner radius must be between 0 and 48."
+        wbm = self.var_popup_wrap_mode.get().strip().lower()
+        if wbm not in ("word", "char"):
+            return 'Popup word break must be "word" or "char".'
         if not self.var_ai_url.get().strip():
             return "AI base URL cannot be empty."
         tpl = self.txt_translate.get("1.0", "end")
@@ -373,15 +428,17 @@ class ConfigPanel(tk.Toplevel):
         d["lens_radius"] = int(self.var_lens_radius.get())
         d["lens_color"] = self.var_lens_color.get().strip()
         d["lens_border_width"] = int(self.var_lens_border.get())
+        d["lens_opacity"] = float(self.var_lens_opacity.get())
 
         d["popup_font_size"] = int(self.var_popup_font.get())
         d["popup_auto_close_ms"] = int(self.var_popup_close.get())
         d["popup_opacity"] = float(self.var_popup_opacity.get())
         d["popup_bg_color"] = self.var_popup_bg.get().strip()
         d["popup_accent_color"] = self.var_popup_accent.get().strip()
-        d["popup_original_fg"] = self.var_popup_orig.get().strip()
         d["popup_translation_fg"] = self.var_popup_trans.get().strip()
         d["popup_max_width"] = int(self.var_popup_maxw.get())
+        d["popup_border_radius"] = int(self.var_popup_border_radius.get())
+        d["popup_wrap_mode"] = self.var_popup_wrap_mode.get().strip().lower()
 
         d["ai_url"] = self.var_ai_url.get().strip()
         d["model"] = self.var_model.get().strip()

@@ -1,10 +1,34 @@
 import tkinter as tk
+import tkinter.font as tkfont
+
+from PIL import Image, ImageDraw, ImageTk
 
 _DEFAULT_BG = "#1e1e1e"
-_DEFAULT_ORIGINAL = "#888888"
 _DEFAULT_THAI = "#ffffff"
 _DEFAULT_ACCENT = "#00ff88"
-PADDING = 16
+_DEFAULT_RADIUS = 6
+PADDING = 12
+
+
+def _rgb_tuple(color: str) -> tuple[int, int, int]:
+    c = color.strip().lstrip("#")
+    if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
+        return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4))
+    return (30, 30, 30)
+
+
+def _fit_text_columns(text: str, font: tkfont.Font, ch_w: int, max_width_px: int) -> int:
+    """Text width in characters: shrink to content when it fits, else cap at max_width_px."""
+    cap = max(8, max_width_px // max(1, ch_w))
+    if not (text or "").strip():
+        return min(cap, 14)
+    widest = max(font.measure(line) for line in text.split("\n"))
+    slack = 28  # widget padx + rounding vs font.measure
+    if widest + slack <= max_width_px:
+        target_px = min(max_width_px, widest + slack)
+        cols = max(1, (target_px + ch_w - 1) // ch_w)
+        return min(cols, cap)
+    return cap
 
 
 class TranslationPopup:
@@ -16,13 +40,18 @@ class TranslationPopup:
 
         accent = config.get("popup_accent_color", _DEFAULT_ACCENT)
         bg_col = config.get("popup_bg_color", _DEFAULT_BG)
-        original_fg = config.get("popup_original_fg", _DEFAULT_ORIGINAL)
         trans_fg = config.get("popup_translation_fg", _DEFAULT_THAI)
-        max_width = int(config.get("popup_max_width", 480))
+        max_width_px = int(config.get("popup_max_width", 480))
+        border_radius = int(config.get("popup_border_radius", _DEFAULT_RADIUS))
+        border_radius = max(0, min(48, border_radius))
         opacity = float(config.get("popup_opacity", 1.0))
         opacity = max(0.25, min(1.0, opacity))
 
+        wrap_mode = str(config.get("popup_wrap_mode", "word")).strip().lower()
+        twrap = tk.CHAR if wrap_mode == "char" else tk.WORD
+
         self._after_id = None
+        self._card_photo: ImageTk.PhotoImage | None = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -31,72 +60,94 @@ class TranslationPopup:
             self.win.attributes("-alpha", opacity)
         except tk.TclError:
             pass
-        self.win.config(bg=accent)
 
-        frame = tk.Frame(self.win, bg=bg_col, padx=PADDING, pady=PADDING)
-        frame.pack(padx=2, pady=2)
+        body = (translated or "").strip()
+        display = body or "(no translation)"
 
-        # Original text label
-        orig_label = tk.Label(
-            frame,
-            text="Original:",
-            font=("Segoe UI", self.font_size - 3, "bold"),
-            fg=accent,
-            bg=bg_col,
-            anchor="w",
-        )
-        orig_label.pack(fill=tk.X)
+        font = tkfont.Font(family="Segoe UI", size=self.font_size)
+        ch_w = max(1, font.measure("M"), font.measure("ก"))
+        chars_wide = _fit_text_columns(display, font, ch_w, max_width_px)
 
-        orig_text = tk.Label(
-            frame,
-            text=original or "(no text detected)",
-            font=("Segoe UI", self.font_size - 2),
-            fg=original_fg,
-            bg=bg_col,
-            wraplength=max_width,
-            justify=tk.LEFT,
-            anchor="w",
-        )
-        orig_text.pack(fill=tk.X, pady=(0, 8))
-
-        # Translation label
-        trans_label = tk.Label(
-            frame,
-            text="Translation:",
-            font=("Segoe UI", self.font_size - 3, "bold"),
-            fg=accent,
-            bg=bg_col,
-            anchor="w",
-        )
-        trans_label.pack(fill=tk.X)
-
-        trans_text = tk.Label(
-            frame,
-            text=translated or "(no translation)",
-            font=("Segoe UI", self.font_size, "bold"),
+        txt = tk.Text(
+            self.win,
+            wrap=twrap,
+            width=chars_wide,
+            height=3,
+            font=font,
             fg=trans_fg,
             bg=bg_col,
-            wraplength=max_width,
-            justify=tk.LEFT,
-            anchor="w",
+            insertbackground=trans_fg,
+            bd=0,
+            highlightthickness=0,
+            padx=2,
+            pady=4,
+            cursor="arrow",
         )
-        trans_text.pack(fill=tk.X, pady=(0, 12))
+        txt.insert("1.0", display)
+        nl = int(float(txt.index("end-1c").split(".")[0]))
+        txt.configure(height=max(1, nl))
+        # Text has no -disabledforeground (Label-only). Read-only without DISABLED avoids greyed themes.
+        def _block_edit(_evt):
+            return "break"
 
-        close_btn = tk.Button(
-            frame,
-            text="Close  [Esc]",
-            font=("Segoe UI", self.font_size - 3),
-            fg=bg_col,
-            bg=accent,
-            activebackground="#00cc66",
-            relief=tk.FLAT,
-            cursor="hand2",
-            command=self.close,
+        for _seq in ("<Key>", "<<Paste>>", "<Button-2>"):
+            txt.bind(_seq, _block_edit)
+
+        line_h = int(font.metrics("linespace"))
+        tw_fallback = max(24, min(max_width_px + 32, chars_wide * ch_w + 24))
+        th_fallback = max(line_h + 8, nl * line_h + 16)
+
+        # Text must use a geometry manager briefly; unmapped widgets report ~1px size.
+        probe_w = min(max_width_px + 100, max(chars_wide * ch_w + 100, 180))
+        self.win.geometry(f"{probe_w}x{max(th_fallback + 120, 200)}+-4000+-4000")
+        self.win.update_idletasks()
+        txt.pack(padx=PADDING, pady=PADDING)
+        self.win.update_idletasks()
+        tw_raw = txt.winfo_reqwidth()
+        th_raw = txt.winfo_reqheight()
+        tw = max(24, min(max_width_px + 32, max(tw_raw, tw_fallback)))
+        th = max(th_raw, th_fallback)
+        txt.pack_forget()
+
+        card_w = tw + 2 * PADDING
+        card_h = th + 2 * PADDING
+
+        r = min(border_radius, card_w // 2, card_h // 2)
+        fill = _rgb_tuple(bg_col)
+        outline = _rgb_tuple(accent)
+        pil = Image.new("RGBA", (max(1, card_w), max(1, card_h)), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(pil)
+        draw.rounded_rectangle(
+            (0, 0, card_w - 1, card_h - 1),
+            radius=r,
+            fill=fill + (255,),
+            outline=outline + (255,),
+            width=1,
         )
-        close_btn.pack(anchor="e")
+
+        photo = ImageTk.PhotoImage(pil)
+        self._card_photo = photo
+
+        self.win.geometry(f"{card_w}x{card_h}")
+        self.win.config(bg=bg_col)
+
+        bg_lbl = tk.Label(
+            self.win,
+            image=photo,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        bg_lbl.place(x=0, y=0, width=card_w, height=card_h)
+
+        txt.place(x=PADDING, y=PADDING, width=tw, height=th)
+        txt.tkraise()
+
+        def _click_close(_):
+            self.close()
 
         self.win.bind("<Escape>", lambda _: self.close())
-        self.win.bind("<Button-1>", lambda _: self.close())
+        for w in (self.win, bg_lbl, txt):
+            w.bind("<Button-1>", _click_close)
 
         self.win.update_idletasks()
         self._position(cx, cy)
@@ -122,6 +173,7 @@ class TranslationPopup:
         if self._after_id:
             self.root.after_cancel(self._after_id)
             self._after_id = None
+        self._card_photo = None
         try:
             self.win.destroy()
         except tk.TclError:

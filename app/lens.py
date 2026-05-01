@@ -13,6 +13,8 @@ MIN_RADIUS = 50
 MAX_RADIUS = 400
 SCROLL_STEP = 20
 POLL_MS = 30
+MIN_OPACITY = 0.25
+MAX_OPACITY = 1.0
 
 _SHIFT_KEYS = {keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r}
 
@@ -23,6 +25,7 @@ class LensWindow:
         self.radius = config.get("lens_radius", 150)
         self.color = config.get("lens_color", "#ABD7FF")
         self.border_width = config.get("lens_border_width", 3)
+        self.opacity = self._clamp_opacity(config.get("lens_opacity", 1.0))
 
         size = self.radius * 2 + 20
 
@@ -42,6 +45,7 @@ class LensWindow:
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         self._make_click_through()
+        self._apply_window_opacity()
 
         # Track shift state via pynput keyboard listener
         self._shift_held = False
@@ -65,7 +69,26 @@ class LensWindow:
         self.color = config.get("lens_color", self.color)
         bw = int(config.get("lens_border_width", self.border_width))
         self.border_width = max(1, min(20, bw))
-        self.root.after(0, self._draw_circle)
+        self.opacity = self._clamp_opacity(config.get("lens_opacity", self.opacity))
+        self.root.after(0, self._apply_lens_visuals)
+
+    @staticmethod
+    def _clamp_opacity(value) -> float:
+        try:
+            x = float(value)
+        except (TypeError, ValueError):
+            x = 1.0
+        return max(MIN_OPACITY, min(MAX_OPACITY, x))
+
+    def _apply_window_opacity(self) -> None:
+        try:
+            self.win.attributes("-alpha", self.opacity)
+        except tk.TclError:
+            pass
+
+    def _apply_lens_visuals(self) -> None:
+        self._apply_window_opacity()
+        self._draw_circle()
 
     def _make_click_through(self):
         hwnd = ctypes.windll.user32.GetParent(self.win.winfo_id())
