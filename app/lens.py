@@ -58,6 +58,8 @@ class LensWindow:
         self._make_click_through()
         self._apply_window_opacity()
 
+        self._dots = _LoadingDots(root)
+
         self._width_mod_held = False
         self._height_mod_held = False
         self._wheel_resize_enabled = True
@@ -164,7 +166,7 @@ class LensWindow:
         )
 
     def _draw_lens(self):
-        self.canvas.delete("all")
+        self.canvas.delete("lens")
         ow, oh = self._outer_size()
         self.win.geometry(f"{ow}x{oh}")
         pad = 10
@@ -177,6 +179,7 @@ class LensWindow:
                 outline=self.color,
                 width=self.border_width,
                 fill=TRANSPARENT_COLOR,
+                tags="lens",
             )
         else:
             self.canvas.create_oval(
@@ -187,6 +190,7 @@ class LensWindow:
                 outline=self.color,
                 width=self.border_width,
                 fill=TRANSPARENT_COLOR,
+                tags="lens",
             )
 
     def _poll_mouse(self):
@@ -282,6 +286,12 @@ class LensWindow:
             "height": self.lens_height,
         }
 
+    def set_loading(self, enabled: bool) -> None:
+        if enabled:
+            self._dots.show()
+        else:
+            self._dots.hide()
+
     def hide(self):
         self.win.withdraw()
 
@@ -293,6 +303,89 @@ class LensWindow:
             self.win.attributes("-topmost", enabled)
         except tk.TclError:
             pass
+
+
+class _LoadingDots:
+    _W, _H = 52, 20
+    _BG = "#1C1C1C"
+    _DOT_ON = "#FFFFFF"
+    _DOT_OFF = "#3A3A3A"
+    _INTERVAL = 280
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self._step = 0
+        self._running = False
+
+        self.win = tk.Toplevel(root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-transparentcolor", TRANSPARENT_COLOR)
+        self.win.config(bg=TRANSPARENT_COLOR)
+        self.win.geometry(f"{self._W}x{self._H}+0+0")
+        self.win.withdraw()
+
+        hwnd = ctypes.windll.user32.GetParent(self.win.winfo_id())
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        ctypes.windll.user32.SetWindowLongW(
+            hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+        )
+
+        self.canvas = tk.Canvas(
+            self.win, bg=TRANSPARENT_COLOR,
+            highlightthickness=0,
+            width=self._W, height=self._H,
+        )
+        self.canvas.pack()
+        self._draw_bg()
+
+    def _draw_bg(self):
+        r, x1, y1, x2, y2 = 7, 0, 0, self._W, self._H
+        pts = [
+            x1+r, y1, x2-r, y1, x2, y1, x2, y1+r,
+            x2, y2-r, x2, y2, x2-r, y2, x1+r, y2,
+            x1, y2, x1, y2-r, x1, y1+r, x1, y1,
+        ]
+        self.canvas.create_polygon(pts, smooth=True, fill=self._BG, outline="")
+
+    def show(self):
+        self._running = True
+        self._step = 0
+        self.win.deiconify()
+        self._poll()
+        self._animate()
+
+    def hide(self):
+        self._running = False
+        self.win.withdraw()
+
+    def _poll(self):
+        if not self._running:
+            return
+        try:
+            x = self.win.winfo_pointerx()
+            y = self.win.winfo_pointery()
+            self.win.geometry(f"+{x + 20}+{y + 20}")
+        except Exception:
+            pass
+        self.root.after(30, self._poll)
+
+    def _animate(self):
+        if not self._running:
+            return
+        self.canvas.delete("dot")
+        cy = self._H // 2
+        for i in range(3):
+            active = (i == self._step % 3)
+            color = self._DOT_ON if active else self._DOT_OFF
+            r = 4 if active else 3
+            cx = 13 + i * 13
+            self.canvas.create_oval(
+                cx - r, cy - r, cx + r, cy + r,
+                fill=color, outline="", tags="dot",
+            )
+        self._step += 1
+        self.root.after(self._INTERVAL, self._animate)
 
 
 def _norm_shape(raw) -> str:

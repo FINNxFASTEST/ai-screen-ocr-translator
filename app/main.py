@@ -11,6 +11,7 @@ from app.capture import capture_region
 from app.exit_button import ExitButton
 from app.hotkeys import (
     config_capture_trigger_raw,
+    hotkey_friendly,
     hotkey_readable,
     normalize_lens_wheel_mod,
     parse_hotkey,
@@ -108,33 +109,8 @@ class App:
             _CAPTURE_MOUSE_READABLE,
         )
         print(f"  Capture : {trig}")
-        print(f"  Exit    : {exit_hotkey}" + (" / red Exit button" if show_btn else ""))
-        print(f"  Lens settings : {lens_hotkey}")
-        print(
-            "  Settings       : "
-            + settings_hotkey
-            + (" / Settings button" if show_btn else " (hide control bar)")
-        )
-        print(f"  Model   : {self.config.get('model')} @ {self.config.get('ai_url')}")
-        _lw = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_width", "alt"))
-        _lh = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_height", "ctrl"))
-        if _lw == _lh:
-            _lh = next(t for t in ("shift", "alt", "ctrl", "win") if t != _lw)
-        _LW = {"alt": "Alt", "shift": "Shift", "ctrl": "Ctrl", "win": "Win"}
-        wm_l = _LW[_lw]
-        hm_l = _LW[_lh]
-        print(f"  Wheel resize: {wm_l} + scroll → width · {hm_l} + scroll → height")
-        print(f"                {wm_l} + {hm_l} + scroll → both.")
-        wk = str(self.config.get("lens_hotkey_resize_width", "") or "").strip()
-        huk = str(self.config.get("lens_hotkey_resize_height_up", "") or "").strip()
-        hdk = str(self.config.get("lens_hotkey_resize_height_down", "") or "").strip()
-        print(
-            f"  Keyboard width +: {wk or '(unset)'} (+{SCROLL_STEP}px; narrow width: {wm_l} + scroll down)"
-        )
-        print(
-            f"  Keyboard height : {huk or '(unset)'} + | {hdk or '(unset)'} − "
-            f"(±{SCROLL_STEP}px)"
-        )
+        print(f"  Exit    : {hotkey_friendly(exit_hotkey)}" + (" / red Exit button" if show_btn else ""))
+        print(f"  Lens settings : {hotkey_friendly(lens_hotkey)}")
         print()
 
         self.root.mainloop()
@@ -429,6 +405,8 @@ class App:
         if self._busy:
             return
         self._busy = True
+        self.lens.hide()
+        self.lens.set_loading(True)
 
         if self._current_popup:
             self._current_popup.close()
@@ -444,9 +422,10 @@ class App:
     def _run_pipeline(self, spec: dict):
         cx = int(spec["cx"])
         cy = int(spec["cy"])
+        debug = bool(self.config.get("debug", False))
         spinner = Spinner()
         try:
-            spinner.start("Capturing image ...")
+            spinner.start("Capturing ...")
             image = capture_region(spec)
 
             ai_ocr_cfg = self.config.get("ai_ocr", {})
@@ -455,7 +434,7 @@ class App:
 
             if ai_ocr_cfg.get("enabled", False):
                 ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma3n:2B-F16")
-                spinner.update(f"Reading text  ->  {ai_model} ...")
+                spinner.update(f"Reading text ... [{ai_model}]" if debug else "Reading text ...")
                 original = extract_text_ai(
                     image,
                     ai_ocr_cfg,
@@ -463,30 +442,32 @@ class App:
                     ai_url,
                 )
             else:
-                spinner.update("Reading text  ->  PaddleOCR ...")
+                spinner.update("Reading text ... [EasyOCR]" if debug else "Reading text ...")
                 ocr_cfg = dict(self.config.get("ocr") or {})
-                if not self.config.get("debug", False):
+                if not debug:
                     ocr_cfg["debug"] = False
                 original = extract_text(image, ocr_cfg)
 
             if not original or original.startswith("[Error"):
-                spinner.stop("  x  No text detected")
+                spinner.stop("  No text found.")
                 self.root.after(0, self._show_empty, cx, cy)
                 return
 
-            spinner.update(f"Translating  ->  {model} ...")
+            spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
             prompt_template = self.config.get("translate", {}).get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
             translated = translate(original, ai_url, model, prompt_template)
 
             preview = original[:48] + ("..." if len(original) > 48 else "")
-            spinner.stop(f"  ok  {preview}")
+            spinner.stop(f"  Done  \"{preview}\"")
 
             self.root.after(0, self._show_popup, original, translated, cx, cy)
         except Exception as e:
-            spinner.stop(f"  x  Pipeline error: {e}")
-            self.root.after(0, self._show_popup, "", f"[Pipeline error: {e}]", cx, cy)
+            spinner.stop(f"  Error: {e}" if debug else "  Something went wrong.")
+            self.root.after(0, self._show_popup, "", f"[Error: {e}]", cx, cy)
         finally:
             self._busy = False
+            self.root.after(0, lambda: self.lens.set_loading(False))
+            self.root.after(0, self.lens.show)
 
     def _show_popup(self, original: str, translated: str, cx: int, cy: int):
         self._current_popup = TranslationPopup(

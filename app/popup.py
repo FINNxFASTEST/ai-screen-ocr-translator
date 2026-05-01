@@ -95,8 +95,9 @@ class TranslationPopup:
             cursor="arrow",
         )
         txt.insert("1.0", display)
-        nl = int(float(txt.index("end-1c").split(".")[0]))
-        txt.configure(height=max(1, nl))
+        nl = max(1, int(float(txt.index("end-1c").split(".")[0])))
+        txt.configure(height=nl)
+
         # Text has no -disabledforeground (Label-only). Read-only without DISABLED avoids greyed themes.
         def _block_edit(_evt):
             return "break"
@@ -108,12 +109,24 @@ class TranslationPopup:
         tw_fallback = max(24, min(max_width_px + 32, chars_wide * ch_w + 24))
         th_fallback = max(line_h + 8, nl * line_h + 16)
 
-        # Text must use a geometry manager briefly; unmapped widgets report ~1px size.
+        # Map widget off-screen so Tk can compute wrap-aware display lines.
         probe_w = min(max_width_px + 100, max(chars_wide * ch_w + 100, 180))
         self.win.geometry(f"{probe_w}x{max(th_fallback + 120, 200)}+-4000+-4000")
         self.win.update_idletasks()
         txt.pack(padx=PADDING, pady=PADDING)
         self.win.update_idletasks()
+
+        # displaylines counts visual rows including word-wrap — use it to fix height.
+        try:
+            dl_result = txt.count("1.0", "end", "displaylines")
+            dl = dl_result[0] if dl_result else nl
+            if dl > nl:
+                nl = dl
+                txt.configure(height=nl)
+                self.win.update_idletasks()
+        except tk.TclError:
+            pass
+
         tw_raw = txt.winfo_reqwidth()
         th_raw = txt.winfo_reqheight()
         tw = max(24, min(max_width_px + 32, max(tw_raw, tw_fallback)))
@@ -140,17 +153,27 @@ class TranslationPopup:
                 width=border_width,
             )
 
-        photo = ImageTk.PhotoImage(pil)
+        # Use a transparent key colour for window corners outside the rounded rect.
+        _TRANS_KEY = "#fe01fe"
+        pil_rgb = Image.new("RGB", (max(1, card_w), max(1, card_h)), _TRANS_KEY)
+        pil_rgb.paste(pil, mask=pil.split()[3])  # alpha-composite onto key colour
+
+        photo = ImageTk.PhotoImage(pil_rgb)
         self._card_photo = photo
 
         self.win.geometry(f"{card_w}x{card_h}")
-        self.win.config(bg=bg_col)
+        self.win.config(bg=_TRANS_KEY)
+        try:
+            self.win.attributes("-transparentcolor", _TRANS_KEY)
+        except tk.TclError:
+            pass
 
         bg_lbl = tk.Label(
             self.win,
             image=photo,
             borderwidth=0,
             highlightthickness=0,
+            bg=_TRANS_KEY,
         )
         bg_lbl.place(x=0, y=0, width=card_w, height=card_h)
 

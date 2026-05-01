@@ -88,7 +88,20 @@ def hotkey_readable(hotkey_str: str, mouse_labels: dict[str, str]) -> str:
     s = hotkey_str.strip().lower()
     if s in mouse_labels:
         return mouse_labels[s]
-    return hotkey_str.strip() or "(not set)"
+    return hotkey_friendly(hotkey_str) or "(not set)"
+
+
+def hotkey_friendly(hotkey_str: str) -> str:
+    """Convert '<ctrl>+<shift>+q' → 'Ctrl+Shift+Q' for human-readable display."""
+    t = hotkey_str.strip()
+    if not t:
+        return t
+    parts = t.split("+")
+    result = []
+    for p in parts:
+        p = p.strip().strip("<>")
+        result.append(p.upper() if len(p) == 1 else p.capitalize())
+    return "+".join(result)
 
 
 def _compose_mods_and_main(mod_bits: list[str], main: str) -> str:

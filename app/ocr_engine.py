@@ -1,3 +1,6 @@
+import contextlib
+import io
+import logging
 import os
 import re
 import warnings
@@ -9,6 +12,11 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 
 warnings.filterwarnings("ignore")
+
+# Silence PaddleOCR / ppocr / paddle loggers at import time so they never
+# inherit the root logger's level and start chattering on first use.
+for _noisy in ("ppocr", "paddleocr", "paddle", "paddle.fluid"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 _reader = None
 _DEBUG_DIR = Path(__file__).resolve().parents[1] / "debug"
@@ -35,10 +43,14 @@ def get_reader():
         except Exception:
             pass
         from paddleocr import PaddleOCR
-        _reader = PaddleOCR(
-            use_angle_cls=True,
-            lang="en",
-        )
+        # Redirect stderr during construction — PaddleOCR writes model-download
+        # and framework messages directly to sys.stderr bypassing logging.
+        with contextlib.redirect_stderr(io.StringIO()):
+            _reader = PaddleOCR(
+                use_angle_cls=True,
+                lang="en",
+                show_log=False,
+            )
     return _reader
 
 
