@@ -638,6 +638,8 @@ class ConfigPanel(tk.Toplevel):
 
         d["debug"] = bool(self.var_debug.get())
         d["show_exit_button"] = bool(self.var_show_exit.get())
+        d.pop("block_desktop_clicks", None)
+        d.pop("block_desktop_opacity", None)
         d["exit_hotkey"] = self.var_exit_hotkey.get().strip()
         d["settings_hotkey"] = self.var_settings_hotkey.get().strip() or "f12"
         d["hotkey"] = self._capture_hotkey_raw()

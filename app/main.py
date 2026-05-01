@@ -209,6 +209,7 @@ class App:
             panel_holder.append(panel)
             self._settings_panel = panel
             panel.bind("<Destroy>", _on_panel_destroy)
+            self.root.after(120, lambda: _bring_settings_to_foreground(panel))
         except Exception as e:
             self._settings_panel = None
             _restore_lens_controls()
@@ -314,6 +315,7 @@ class App:
         self._current_popup = TranslationPopup(
             self.root, original, translated, cx, cy, self.config
         )
+        self.root.after(30, self._raise_current_popup)
 
     def _show_empty(self, cx: int, cy: int):
         self._current_popup = TranslationPopup(
@@ -323,7 +325,24 @@ class App:
             cx, cy,
             self.config,
         )
+        self.root.after(30, self._raise_current_popup)
         self._busy = False
+
+    def _raise_current_popup(self) -> None:
+        p = self._current_popup
+        if p is None:
+            return
+        try:
+            if self._exit_btn is not None:
+                p.win.lift(self._exit_btn.win)
+            else:
+                p.win.lift(self.lens.win)
+        except tk.TclError:
+            pass
+        try:
+            p.win.lift()
+        except tk.TclError:
+            pass
 
     def _quit(self):
         self._mouse_listener.stop()
