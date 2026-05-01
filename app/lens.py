@@ -1,5 +1,5 @@
-import tkinter as tk
 import ctypes
+import tkinter as tk
 
 from pynput import keyboard, mouse
 

@@ -4,14 +4,15 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-import numpy as np
+
 import easyocr
+import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
 warnings.filterwarnings("ignore", message=".*pin_memory.*", category=UserWarning)
 
 _reader = None
-_DEBUG_DIR = Path(__file__).parent / "debug"
+_DEBUG_DIR = Path(__file__).resolve().parents[1] / "debug"
 
 # OCR tuning defaults — can be overridden via config.json "ocr" key
 _OCR_DEFAULTS = {

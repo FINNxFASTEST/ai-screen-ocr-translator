@@ -1,13 +1,13 @@
 # Screen OCR Translator
 
-Captures text from your screen using a circular lens, translates English → Thai via a local Ollama model, and shows the result in a popup.
+Captures text from your screen using a circular lens, translates English -> Thai via local Docker Model Runner models, and shows the result in a popup.
 
 ---
 
 ## Requirements
 
 - Python 3.10+
-- [Ollama](https://ollama.com) installed and running locally
+- Docker Desktop with Docker Model Runner enabled
 
 ---
 
@@ -19,18 +19,19 @@ Captures text from your screen using a circular lens, translates English → Tha
 pip install -r requirements.txt
 ```
 
-### 2. Install and start Ollama
+### 2. Pull required models
 
-Download Ollama from https://ollama.com then run:
+You can pull models manually:
 
 ```bash
-ollama serve
+docker model pull docker.io/ai/gemma3:4B-F16
+docker model pull docker.io/ai/gemma3n:2B-F16
 ```
 
-### 3. Pull the translation model
+Or use the helper script:
 
-```bash
-ollama pull qwen2.5:7b
+```bat
+start.bat
 ```
 
 ---
@@ -51,7 +52,7 @@ python main.py
 | **Left Shift + Scroll wheel** | Resize the lens (larger = captures more text) |
 | **Middle click** | Capture → OCR → Translate → show popup |
 | **Esc** or **click popup** | Dismiss the translation popup |
-| **Ctrl+Q** (configurable) | Quit via keyboard shortcut |
+| **Ctrl+Shift+Alt+Q** (configurable) | Quit via keyboard shortcut |
 | **Red Exit button** | Quit via on-screen button (can be hidden in config) |
 
 ---
@@ -61,26 +62,33 @@ python main.py
 ```json
 {
   "hotkey": "middle_click",
-  "model": "qwen2.5:7b",
-  "ollama_url": "http://localhost:11434",
+  "model": "docker.io/ai/gemma3:4B-F16",
+  "ai_url": "http://localhost:12434",
   "lens_radius": 150,
   "lens_color": "#00ff88",
   "lens_border_width": 3,
   "popup_font_size": 14,
-  "popup_auto_close_ms": 15000
+  "popup_auto_close_ms": 15000,
+  "exit_hotkey": "<ctrl>+<shift>+<alt>+q",
+  "ai_ocr": {
+    "enabled": true,
+    "model": "docker.io/ai/gemma3n:2B-F16"
+  }
 }
 ```
 
 | Key | Description |
 |---|---|
-| `model` | Ollama model name to use for translation |
-| `ollama_url` | URL of your local Ollama server |
+| `model` | Translation model name |
+| `ai_url` | URL of your local model server |
 | `lens_radius` | Starting radius of the capture circle (px) |
 | `lens_color` | Color of the circle border (hex) |
 | `lens_border_width` | Thickness of the circle border (px) |
 | `popup_font_size` | Font size of the translation popup |
 | `popup_auto_close_ms` | How long the popup stays open (milliseconds) |
-| `exit_hotkey` | Keyboard shortcut to quit (e.g. `"<ctrl>+q"`, `"<ctrl>+<shift>+x"`) |
+| `exit_hotkey` | Keyboard shortcut to quit (default `"<ctrl>+<shift>+<alt>+q"`) |
+| `ai_ocr.enabled` | Enable vision-model OCR before EasyOCR fallback |
+| `ai_ocr.model` | Vision OCR model name |
 | `show_exit_button` | `true` / `false` — show or hide the red Exit button |
 
 ---
@@ -89,12 +97,17 @@ python main.py
 
 ```
 manga-translator/
-├── main.py          # Entry point
-├── lens.py          # Circular overlay that follows your mouse
-├── capture.py       # Screenshots the lens area
-├── ocr_engine.py    # EasyOCR extracts text from image
-├── translator.py    # Sends text to Ollama, returns Thai
-├── popup.py         # Displays the translation result
-├── config.json      # Settings
-└── requirements.txt # Python dependencies
+├── app/
+│   ├── main.py         # App orchestration and pipeline
+│   ├── lens.py         # Circular overlay that follows your mouse
+│   ├── capture.py      # Screenshots the lens area
+│   ├── ocr_engine.py   # EasyOCR extracts text from image
+│   ├── ai_ocr.py       # Vision-model OCR path
+│   ├── translator.py   # Sends text to local model API, returns Thai
+│   ├── popup.py        # Displays the translation result
+│   ├── exit_button.py  # Floating controls (test connection + exit)
+│   └── spinner.py      # CLI activity spinner
+├── main.py             # Stable entrypoint for local run
+├── config.json         # Settings
+└── requirements.txt    # Python dependencies
 ```

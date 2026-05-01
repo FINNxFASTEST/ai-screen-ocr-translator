@@ -3,7 +3,7 @@ import threading
 import time
 
 _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-_WIDTH  = 60
+_WIDTH = 60
 
 
 class Spinner:

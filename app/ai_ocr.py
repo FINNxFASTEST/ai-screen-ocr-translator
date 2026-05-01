@@ -5,7 +5,7 @@ from datetime import datetime
 import requests
 from PIL import Image
 
-from ocr_engine import _preprocess, _save_debug
+from app.ocr_engine import _preprocess, _save_debug
 
 _DEFAULTS = {
     "model": "docker.io/ai/gemma3n:2B-F16",
