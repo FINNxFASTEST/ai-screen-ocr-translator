@@ -223,6 +223,11 @@ def validate_keyboard_hotkey_string(s: str) -> str | None:
     return None
 
 
+def config_capture_trigger_raw(cfg: dict) -> str:
+    """Prefer capture_hotkey; fall back to legacy hotkey key."""
+    return str(cfg.get("capture_hotkey") or cfg.get("hotkey", "middle_click")).strip()
+
+
 def normalize_lens_wheel_mod(raw: object) -> str:
     """Config token for which modifier combines with mouse wheel for lens resize (Windows)."""
     t = str(raw or "alt").strip().lower()

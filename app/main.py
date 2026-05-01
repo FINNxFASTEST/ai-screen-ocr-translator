@@ -9,7 +9,12 @@ from pynput import keyboard, mouse
 from app.ai_ocr import extract_text_ai
 from app.capture import capture_region
 from app.exit_button import ExitButton
-from app.hotkeys import hotkey_readable, normalize_lens_wheel_mod, parse_hotkey
+from app.hotkeys import (
+    config_capture_trigger_raw,
+    hotkey_readable,
+    normalize_lens_wheel_mod,
+    parse_hotkey,
+)
 from app.lens import SCROLL_STEP, LensWindow
 from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
@@ -99,7 +104,7 @@ class App:
         lens_hotkey = self.config.get("lens_settings_hotkey", "f11")
         print("OCR Translator running.")
         trig = hotkey_readable(
-            str(self.config.get("hotkey", "middle_click")),
+            config_capture_trigger_raw(self.config),
             _CAPTURE_MOUSE_READABLE,
         )
         print(f"  Capture : {trig}")
@@ -112,7 +117,7 @@ class App:
         )
         print(f"  Model   : {self.config.get('model')} @ {self.config.get('ai_url')}")
         _lw = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_width", "alt"))
-        _lh = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_height", "shift"))
+        _lh = normalize_lens_wheel_mod(self.config.get("lens_wheel_mod_height", "ctrl"))
         if _lw == _lh:
             _lh = next(t for t in ("shift", "alt", "ctrl", "win") if t != _lw)
         _LW = {"alt": "Alt", "shift": "Shift", "ctrl": "Ctrl", "win": "Win"}
@@ -156,7 +161,7 @@ class App:
         self._reload_capture_trigger()
 
     def _reload_capture_trigger(self) -> None:
-        raw = str(self.config.get("hotkey", "middle_click")).strip()
+        raw = config_capture_trigger_raw(self.config)
         raw_lc = raw.lower()
         btn = _CAPTURE_MOUSE_TOKENS.get(raw_lc)
         if btn is not None:

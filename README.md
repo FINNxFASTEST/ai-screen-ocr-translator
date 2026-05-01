@@ -61,7 +61,7 @@ python main.py
 
 ```json
 {
-  "hotkey": "middle_click",
+  "capture_hotkey": "middle_click",
   "model": "docker.io/ai/gemma3:4B-F16",
   "ai_url": "http://localhost:12434",
   "lens_radius": 150,
@@ -86,6 +86,7 @@ python main.py
 | `lens_border_width` | Thickness of the circle border (px) |
 | `popup_font_size` | Font size of the translation popup |
 | `popup_auto_close_ms` | How long the popup stays open (milliseconds) |
+| `capture_hotkey` | Mouse token (e.g. `middle_click`) or keyboard chord (same format as other shortcuts); legacy key `hotkey` is still read |
 | `exit_hotkey` | Keyboard shortcut to quit (default `"<ctrl>+<shift>+<alt>+q"`) |
 | `ai_ocr.enabled` | Enable vision-model OCR before EasyOCR fallback |
 | `ai_ocr.model` | Vision OCR model name |

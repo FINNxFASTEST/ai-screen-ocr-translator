@@ -12,6 +12,7 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Callable
 
 from app.hotkeys import (
+    config_capture_trigger_raw,
     normalize_lens_wheel_mod,
     tk_key_event_to_hotkey,
     validate_keyboard_hotkey_string,
@@ -21,7 +22,7 @@ _ListenCb = Callable[[str], None]
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
-_CAPTURE_CUSTOM_LABEL = "Custom keyboard shortcut…"
+_CAPTURE_MOUSE_COMBO_PLACEHOLDER = "— keyboard (Listen…) —"
 
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
@@ -37,16 +38,13 @@ _CAPTURE_MOUSE_TOKEN_SET = {token.lower() for _, token in _CAPTURE_MOUSE_CHOICES
 )
 
 
-def _all_mouse_aliases() -> dict[str, str]:
-    """Map lowercase config token → UI label."""
-    aliases: dict[str, str] = {}
-    for label, token in _CAPTURE_MOUSE_CHOICES:
-        aliases[token.lower()] = label
-    aliases["x1"] = "Mouse side / back (X1)"
-    aliases["x2"] = "Mouse side / forward (X2)"
-    aliases["back"] = "Mouse side / back (X1)"
-    aliases["forward"] = "Mouse side / forward (X2)"
-    return aliases
+def _capture_token_to_mouse_label(token_lc: str) -> str | None:
+    alias = {"x1": "mouse_x1", "back": "mouse_x1", "x2": "mouse_x2", "forward": "mouse_x2"}
+    canon = alias.get(token_lc, token_lc)
+    for label, tok in _CAPTURE_MOUSE_CHOICES:
+        if tok.lower() == canon:
+            return label
+    return None
 
 
 def _win32_force_window_visible(hwnd: int) -> None:
@@ -363,7 +361,7 @@ class ConfigPanel(tk.Toplevel):
     def _lens_wheel_scroll_hint_saved(self) -> str:
         labels = {"alt": "Alt", "shift": "Shift", "ctrl": "Ctrl", "win": "Win"}
         w = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_width", "alt"))
-        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "shift"))
+        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "ctrl"))
         if w == h:
             h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
         return (
@@ -590,52 +588,36 @@ class ConfigPanel(tk.Toplevel):
             anchor="w", pady=(10, 0)
         )
 
-        cap_fr = tk.LabelFrame(tab, text="Capture trigger (run OCR + translate)")
-        cap_fr.pack(fill=tk.X, pady=(10, 0))
-
-        presets = [lbl for lbl, _ in _CAPTURE_MOUSE_CHOICES] + [_CAPTURE_CUSTOM_LABEL]
-        self.var_capture_preset = tk.StringVar()
-        combo = ttk.Combobox(
-            cap_fr,
-            values=presets,
-            textvariable=self.var_capture_preset,
-            state="readonly",
-            width=44,
-        )
-        combo.pack(anchor="w", padx=8, pady=(8, 4))
-        combo.bind("<<ComboboxSelected>>", self._on_capture_preset_changed)
-
-        row_cap = tk.Frame(cap_fr)
-        row_cap.pack(fill=tk.X, padx=8, pady=(0, 8))
-        self.var_capture_display = tk.StringVar()
-        tk.Label(row_cap, textvariable=self.var_capture_display, anchor="w", justify="left").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
-        )
-        ttk.Button(row_cap, text="Listen…", width=12, command=self._listen_capture_hotkey).pack(side=tk.LEFT)
-
-        hk0 = str(self._data.get("hotkey", "middle_click")).strip()
-        aliases = _all_mouse_aliases()
-        preset_label = aliases.get(hk0.lower(), _CAPTURE_CUSTOM_LABEL)
-        self.var_capture_preset.set(preset_label)
-        self._capture_keyboard_value = hk0.strip() if preset_label == _CAPTURE_CUSTOM_LABEL else ""
-        self._refresh_capture_bind_display()
-
-        tk.Label(
-            cap_fr,
-            text="Mouse = one global click; keyboard = chords while the translator runs. Use Listen—no typing shortcuts here.",
-            fg="#555",
-            wraplength=520,
-            justify=tk.LEFT,
-        ).pack(anchor="w", padx=8, pady=(0, 8))
-
         self.var_exit_hotkey = tk.StringVar(value=str(self._data.get("exit_hotkey", "<ctrl>+<shift>+<alt>+q")))
         self.var_settings_hotkey = tk.StringVar(value=str(self._data.get("settings_hotkey", "f12")))
         self.var_lens_settings_hotkey = tk.StringVar(
             value=str(self._data.get("lens_settings_hotkey", "f11")),
         )
 
+        self.var_capture_hotkey = tk.StringVar(value=config_capture_trigger_raw(self._data))
+
         hk_fr = tk.LabelFrame(tab, text="Shortcuts (Listen only)")
         hk_fr.pack(fill=tk.X, pady=(10, 0))
+        self._shortcut_listen_row(
+            hk_fr, "Run capture (OCR + translate):", self.var_capture_hotkey, self._listen_capture_hotkey
+        )
+
+        cap_mouse_fr = tk.Frame(hk_fr)
+        cap_mouse_fr.pack(fill=tk.X, padx=8, pady=(0, 6))
+        tk.Label(cap_mouse_fr, text="Or mouse button:", width=22, anchor="w").pack(side=tk.LEFT)
+        self.var_capture_mouse_combo = tk.StringVar()
+        cb_cap_mouse_vals = [_CAPTURE_MOUSE_COMBO_PLACEHOLDER] + [lbl for lbl, _ in _CAPTURE_MOUSE_CHOICES]
+        self._cb_capture_mouse = ttk.Combobox(
+            cap_mouse_fr,
+            values=cb_cap_mouse_vals,
+            textvariable=self.var_capture_mouse_combo,
+            state="readonly",
+            width=36,
+        )
+        self._cb_capture_mouse.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._cb_capture_mouse.bind("<<ComboboxSelected>>", self._on_capture_mouse_combo_selected)
+        self._sync_capture_mouse_combo_display()
+
         self._shortcut_listen_row(hk_fr, "Quit translator:", self.var_exit_hotkey, self._listen_exit_hotkey)
         self._shortcut_listen_row(hk_fr, "Quick Lens settings:", self.var_lens_settings_hotkey, self._listen_lens_settings_hotkey)
         self._shortcut_listen_row(hk_fr, "Open Settings:", self.var_settings_hotkey, self._listen_settings_hotkey)
@@ -644,7 +626,8 @@ class ConfigPanel(tk.Toplevel):
 
         tk.Label(
             tab,
-            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels.",
+            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels. "
+            "Use Listen for a keyboard chord, or pick a mouse button in the row below it.",
             fg="#555",
             wraplength=520,
             justify=tk.LEFT,
@@ -654,7 +637,7 @@ class ConfigPanel(tk.Toplevel):
         if hasattr(self, "var_lens_wheel_mod_width"):
             return
         w = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_width", "alt"))
-        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "shift"))
+        h = normalize_lens_wheel_mod(self._data.get("lens_wheel_mod_height", "ctrl"))
         if w == h:
             h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
         self.var_lens_wheel_mod_width = tk.StringVar(value=w)
@@ -783,11 +766,26 @@ class ConfigPanel(tk.Toplevel):
         dlg.after(80, dlg.grab_set)
         dlg.after(120, dlg.focus_force)
 
+    def _sync_capture_mouse_combo_display(self) -> None:
+        raw = self.var_capture_hotkey.get().strip().lower()
+        lbl = _capture_token_to_mouse_label(raw)
+        if lbl:
+            self.var_capture_mouse_combo.set(lbl)
+        else:
+            self.var_capture_mouse_combo.set(_CAPTURE_MOUSE_COMBO_PLACEHOLDER)
+
+    def _on_capture_mouse_combo_selected(self, _evt=None) -> None:
+        choice = self.var_capture_mouse_combo.get().strip()
+        if choice == _CAPTURE_MOUSE_COMBO_PLACEHOLDER:
+            return
+        tok = _CAPTURE_LABEL_TO_TOKEN.get(choice)
+        if tok:
+            self.var_capture_hotkey.set(tok)
+
     def _listen_capture_hotkey(self) -> None:
         def apply(hk: str) -> None:
-            self._capture_keyboard_value = hk.strip()
-            self.var_capture_preset.set(_CAPTURE_CUSTOM_LABEL)
-            self._refresh_capture_bind_display()
+            self.var_capture_hotkey.set(hk.strip())
+            self._sync_capture_mouse_combo_display()
 
         self._open_key_listen_dialog("Record capture shortcut", apply)
 
@@ -826,23 +824,6 @@ class ConfigPanel(tk.Toplevel):
             self.var_lens_hk_resize_h_dn.set(hk.strip())
 
         self._open_key_listen_dialog("Record height-decrease shortcut", apply)
-
-    def _refresh_capture_bind_display(self) -> None:
-        if self.var_capture_preset.get() == _CAPTURE_CUSTOM_LABEL:
-            inner = self._capture_keyboard_value.strip()
-            shown = inner if inner else "(Press Listen…)"
-        else:
-            shown = "(keyboard not used — mouse preset)"
-        self.var_capture_display.set(shown)
-
-    def _on_capture_preset_changed(self, _evt=None) -> None:
-        self._refresh_capture_bind_display()
-
-    def _capture_hotkey_raw(self) -> str:
-        label = self.var_capture_preset.get()
-        if label == _CAPTURE_CUSTOM_LABEL:
-            return self._capture_keyboard_value.strip()
-        return _CAPTURE_LABEL_TO_TOKEN.get(label, "middle_click")
 
     def _validate(self) -> str | None:
         shape = self.var_lens_shape.get().strip().lower()
@@ -913,11 +894,13 @@ class ConfigPanel(tk.Toplevel):
         lsh = validate_keyboard_hotkey_string(lsh_raw)
         if lsh:
             return f"Lens settings shortcut: {lsh}"
-        cap = self._capture_hotkey_raw()
+        cap = self.var_capture_hotkey.get().strip()
+        if not cap:
+            return "Capture trigger missing — use Listen or pick a mouse button."
         if cap.lower() not in _CAPTURE_MOUSE_TOKEN_SET:
             cap_err = validate_keyboard_hotkey_string(cap)
             if cap_err:
-                return f"Capture trigger: {cap_err}"
+                return f"Capture shortcut: {cap_err}"
         return None
 
     def _merge_lens_into_config(self, d: dict) -> None:
@@ -995,7 +978,8 @@ class ConfigPanel(tk.Toplevel):
         d["exit_hotkey"] = self.var_exit_hotkey.get().strip()
         d["settings_hotkey"] = self.var_settings_hotkey.get().strip() or "f12"
         d["lens_settings_hotkey"] = self.var_lens_settings_hotkey.get().strip() or "f11"
-        d["hotkey"] = self._capture_hotkey_raw()
+        d["capture_hotkey"] = self.var_capture_hotkey.get().strip() or "middle_click"
+        d.pop("hotkey", None)
 
         return d
 

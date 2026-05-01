@@ -1,5 +1,5 @@
 {
-  "hotkey": "middle_click",
+  "capture_hotkey": "<ctrl>+<delete>",
   "model": "docker.io/ai/gemma3:4B-F16",
   "ai_url": "http://localhost:12434",
   "settings_hotkey": "f12",
@@ -7,8 +7,8 @@
   "lens_hotkey_resize_width": "<ctrl>+<alt>+bracketright",
   "lens_hotkey_resize_height_up": "<ctrl>+<alt>+equals",
   "lens_hotkey_resize_height_down": "<ctrl>+<alt>+minus",
-  "lens_wheel_mod_width": "win",
-  "lens_wheel_mod_height": "shift",
+  "lens_wheel_mod_width": "shift",
+  "lens_wheel_mod_height": "alt",
   "lens_shape": "circle",
   "lens_radius": 70,
   "lens_width": 140,

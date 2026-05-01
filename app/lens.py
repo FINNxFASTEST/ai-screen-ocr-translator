@@ -61,6 +61,9 @@ class LensWindow:
         self._width_mod_held = False
         self._height_mod_held = False
         self._wheel_resize_enabled = True
+        self._wheel_suppress_os_scroll = bool(
+            config.get("lens_wheel_suppress_os_scroll", True)
+        )
         self._reload_wheel_modifiers(config)
         self._kb = keyboard.Listener(
             on_press=self._on_key_press,
@@ -68,7 +71,16 @@ class LensWindow:
         )
         self._kb.start()
 
-        self._mouse = mouse.Listener(on_scroll=self._on_scroll)
+        def hooked_scroll(x, y, dx, dy, injected=False):
+            # Injected events must pass through (e.g. synthetic scroll).
+            if injected:
+                return
+            self._on_scroll(x, y, dx, dy)
+            if self._lens_wheel_blocks_os_delivery(dx, dy):
+                m_listener.suppress_event()
+
+        m_listener = mouse.Listener(on_scroll=hooked_scroll)
+        self._mouse = m_listener
         self._mouse.start()
 
         self._draw_lens()
@@ -112,12 +124,15 @@ class LensWindow:
         bw = int(config.get("lens_border_width", self.border_width))
         self.border_width = max(1, min(20, bw))
         self.opacity = self._clamp_opacity(config.get("lens_opacity", self.opacity))
+        self._wheel_suppress_os_scroll = bool(
+            config.get("lens_wheel_suppress_os_scroll", True)
+        )
         self._reload_wheel_modifiers(config)
         self.root.after(0, self._apply_lens_visuals)
 
     def _reload_wheel_modifiers(self, config: dict) -> None:
         w = normalize_lens_wheel_mod(config.get("lens_wheel_mod_width", "alt"))
-        h = normalize_lens_wheel_mod(config.get("lens_wheel_mod_height", "shift"))
+        h = normalize_lens_wheel_mod(config.get("lens_wheel_mod_height", "ctrl"))
         if w == h:
             h = next(t for t in ("shift", "alt", "ctrl", "win") if t != w)
         self._width_mod_keys = lens_scroll_modifier_key_set(w)
@@ -195,6 +210,14 @@ class LensWindow:
             self._width_mod_held = False
         if key in self._height_mod_keys:
             self._height_mod_held = False
+
+    def _lens_wheel_blocks_os_delivery(self, dx: int, dy: int) -> bool:
+        """True when wheel should not reach other apps (Windows low-level hook)."""
+        if not self._wheel_suppress_os_scroll or not self._wheel_resize_enabled:
+            return False
+        if not self._width_mod_held and not self._height_mod_held:
+            return False
+        return dx != 0 or dy != 0
 
     def _on_scroll(self, x, y, dx, dy):
         if not self._wheel_resize_enabled:
