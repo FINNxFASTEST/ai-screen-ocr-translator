@@ -487,7 +487,7 @@ class App:
 
             ai_ocr_cfg = self.config.get("ai_ocr", {})
             tr_endpoint = resolve_translate(self.config)
-            model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
+            model = self.config.get("model", "docker.io/ai/gemma4:E2B")
 
             ocr_root = self.config.get("ocr") or {}
             engine = str(ocr_root.get("engine") or "").strip().lower()
@@ -503,7 +503,7 @@ class App:
                 ocr_cfg["debug"] = False
 
             if engine == "ai_vision":
-                ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma3:4B-F16")
+                ai_model = ai_ocr_cfg.get("model", "docker.io/ai/gemma4:E2B")
                 label = f"AI Vision / {ai_model}" if debug else "AI Vision OCR"
                 spinner.update(f"Reading text ... [{label}]" if debug else "Reading text ...")
                 original = extract_text_ai(
@@ -728,7 +728,7 @@ class App:
     def _retranslate_worker(self, original: str, cx: int, cy: int, series_key: str) -> None:
         spinner = Spinner()
         debug = bool(self.config.get("debug", False))
-        model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
+        model = self.config.get("model", "docker.io/ai/gemma4:E2B")
         tr_endpoint = resolve_translate(self.config)
         t0 = time.perf_counter()
         try:

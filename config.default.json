@@ -1,6 +1,6 @@
 {
   "capture_hotkey": "middle_click",
-  "model": "docker.io/ai/gemma3:4B-F16",
+  "model": "docker.io/ai/gemma4:E2B",
   "ai_url": "http://localhost:12434",
   "settings_hotkey": "f12",
   "lens_hotkey_resize_width": "<ctrl>+<alt>+bracketright",
@@ -54,7 +54,7 @@
       "provider": "inherit"
     },
     "enabled": false,
-    "model": "docker.io/ai/gemma3:4B-F16",
+    "model": "docker.io/ai/gemma4:E2B",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
   },

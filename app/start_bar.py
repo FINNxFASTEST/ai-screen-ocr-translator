@@ -21,7 +21,7 @@ PENDING_COLOR = "#555555"
 
 _STEPS = [
     ("packages", "Install Python packages"),
-    ("model_trans", "Pull translation model  (gemma3:4B-F16)"),
+    ("model_trans", "Pull translation model  (gemma4:E2B)"),
     ("ready", "Ready to launch"),
 ]
 
@@ -197,9 +197,9 @@ class StartBar:
         # ── 2. Docker model ──────────────────────────────────────────────
         self._set_step("model_trans", "busy")
         self._set_status("Pulling translation model…")
-        self._log_line("▸ docker model pull docker.io/ai/gemma3:4B-F16")
+        self._log_line("▸ docker model pull docker.io/ai/gemma4:E2B")
         docker_ok = self._run_cmd(
-            ["docker", "model", "pull", "docker.io/ai/gemma3:4B-F16"],
+            ["docker", "model", "pull", "docker.io/ai/gemma4:E2B"],
             label="docker",
         )
         if docker_ok:

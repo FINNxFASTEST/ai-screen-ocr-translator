@@ -3,10 +3,10 @@ services:
     provider:
       type: model
       options:
-        model: ${TRANSLATE_MODEL:-docker.io/ai/gemma3:4B-F16}
+        model: ${TRANSLATE_MODEL:-docker.io/ai/gemma4:E2B}
 
   ocr-model:
     provider:
       type: model
       options:
-        model: ${OCR_MODEL:-docker.io/ai/gemma3:4B-F16}
+        model: ${OCR_MODEL:-docker.io/ai/gemma4:E2B}
