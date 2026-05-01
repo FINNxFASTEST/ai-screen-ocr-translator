@@ -22,7 +22,9 @@ _ListenCb = Callable[[str], None]
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
-_CAPTURE_MOUSE_COMBO_PLACEHOLDER = "— keyboard (Listen…) —"
+# tk.Label default fg is often "" before map; config(fg="") can hide text on Windows.
+_SHORTCUT_VALUE_FG = "#1a1a1a"
+_SHORTCUT_MUTED_FG = "#666666"
 
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
@@ -36,6 +38,14 @@ _CAPTURE_LABEL_TO_TOKEN = {label: token for label, token in _CAPTURE_MOUSE_CHOIC
 _CAPTURE_MOUSE_TOKEN_SET = {token.lower() for _, token in _CAPTURE_MOUSE_CHOICES}.union(
     {"x1", "x2", "back", "forward"}
 )
+
+
+def _format_hotkey_plain_display(s: str) -> str:
+    """Spaces around '+' for labels only (stored config string unchanged)."""
+    t = s.strip()
+    if not t or "+" not in t:
+        return t
+    return " + ".join(p.strip() for p in t.split("+"))
 
 
 def _capture_token_to_mouse_label(token_lc: str) -> str | None:
@@ -599,24 +609,36 @@ class ConfigPanel(tk.Toplevel):
         hk_fr = tk.LabelFrame(tab, text="Shortcuts (Listen only)")
         hk_fr.pack(fill=tk.X, pady=(10, 0))
         self._shortcut_listen_row(
-            hk_fr, "Run capture (OCR + translate):", self.var_capture_hotkey, self._listen_capture_hotkey
+            hk_fr,
+            "Run capture (OCR + translate):",
+            self.var_capture_hotkey,
+            self._listen_capture_hotkey,
+            display_format=lambda r: _capture_token_to_mouse_label(r.lower())
+            or _format_hotkey_plain_display(r),
         )
 
         cap_mouse_fr = tk.Frame(hk_fr)
         cap_mouse_fr.pack(fill=tk.X, padx=8, pady=(0, 6))
-        tk.Label(cap_mouse_fr, text="Or mouse button:", width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(cap_mouse_fr, text="Capture (mouse menu):", width=22, anchor="w").pack(side=tk.LEFT)
         self.var_capture_mouse_combo = tk.StringVar()
-        cb_cap_mouse_vals = [_CAPTURE_MOUSE_COMBO_PLACEHOLDER] + [lbl for lbl, _ in _CAPTURE_MOUSE_CHOICES]
         self._cb_capture_mouse = ttk.Combobox(
             cap_mouse_fr,
-            values=cb_cap_mouse_vals,
             textvariable=self.var_capture_mouse_combo,
             state="readonly",
-            width=36,
+            width=42,
         )
         self._cb_capture_mouse.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._cb_capture_mouse.bind("<<ComboboxSelected>>", self._on_capture_mouse_combo_selected)
+        self.var_capture_hotkey.trace_add("write", lambda *_: self._sync_capture_mouse_combo_display())
         self._sync_capture_mouse_combo_display()
+
+        tk.Label(
+            hk_fr,
+            text="When using keys, the menu shows “Keyboard: …” with your chord; pick a mouse line to switch to a click.",
+            fg="#555",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 6))
 
         self._shortcut_listen_row(hk_fr, "Quit translator:", self.var_exit_hotkey, self._listen_exit_hotkey)
         self._shortcut_listen_row(hk_fr, "Quick Lens settings:", self.var_lens_settings_hotkey, self._listen_lens_settings_hotkey)
@@ -626,8 +648,7 @@ class ConfigPanel(tk.Toplevel):
 
         tk.Label(
             tab,
-            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels. "
-            "Use Listen for a keyboard chord, or pick a mouse button in the row below it.",
+            text="Listen opens a grab window: press your shortcut (modifiers + key). Escape cancels without changing.",
             fg="#555",
             wraplength=520,
             justify=tk.LEFT,
@@ -695,12 +716,26 @@ class ConfigPanel(tk.Toplevel):
 
         hk_r = tk.LabelFrame(parent, text="Lens resize (keyboard, optional)")
         hk_r.pack(fill=tk.X, pady=(10, 0))
-        self._shortcut_listen_row(hk_r, "Widen width (+):", self.var_lens_hk_resize_w, self._listen_lens_hk_resize_w)
         self._shortcut_listen_row(
-            hk_r, "Height increase (+):", self.var_lens_hk_resize_h_up, self._listen_lens_hk_resize_h_up
+            hk_r,
+            "Widen width (+):",
+            self.var_lens_hk_resize_w,
+            self._listen_lens_hk_resize_w,
+            empty_as="(none — disabled)",
         )
         self._shortcut_listen_row(
-            hk_r, "Height decrease (-):", self.var_lens_hk_resize_h_dn, self._listen_lens_hk_resize_h_dn
+            hk_r,
+            "Height increase (+):",
+            self.var_lens_hk_resize_h_up,
+            self._listen_lens_hk_resize_h_up,
+            empty_as="(none — disabled)",
+        )
+        self._shortcut_listen_row(
+            hk_r,
+            "Height decrease (-):",
+            self.var_lens_hk_resize_h_dn,
+            self._listen_lens_hk_resize_h_dn,
+            empty_as="(none — disabled)",
         )
         tk.Label(
             hk_r,
@@ -719,27 +754,88 @@ class ConfigPanel(tk.Toplevel):
         label: str,
         display_var: tk.StringVar,
         listen_cmd: Callable[[], None],
+        *,
+        empty_as: str | None = None,
+        display_format: Callable[[str], str] | None = None,
     ) -> None:
         fr = tk.Frame(parent)
         fr.pack(fill=tk.X, padx=8, pady=6)
         tk.Label(fr, text=label, width=22, anchor="w").pack(side=tk.LEFT)
-        tk.Label(fr, textvariable=display_var, anchor="w", justify="left").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+        text_lbl = tk.Label(
+            fr,
+            anchor="w",
+            justify="left",
+            fg=_SHORTCUT_VALUE_FG,
+            wraplength=280,
         )
+        text_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+
+        def refresh_var(*_: object) -> None:
+            raw = display_var.get().strip()
+            if raw:
+                shown = display_format(raw) if display_format else raw
+                text_lbl.config(text=shown, fg=_SHORTCUT_VALUE_FG)
+            elif empty_as is not None:
+                text_lbl.config(text=empty_as, fg=_SHORTCUT_MUTED_FG)
+            else:
+                text_lbl.config(text="", fg=_SHORTCUT_VALUE_FG)
+
+        display_var.trace_add("write", refresh_var)
+        refresh_var()
+
         ttk.Button(fr, text="Listen…", width=12, command=listen_cmd).pack(side=tk.RIGHT)
 
-    def _open_key_listen_dialog(self, title: str, on_capture: _ListenCb) -> None:
+    @staticmethod
+    def _shortcut_listen_hint(saved: str, *, optional_disabled: bool = False) -> str:
+        """Human line for Listen dialog ‘current shortcut’ banner."""
+        t = saved.strip()
+        if t:
+            return t
+        if optional_disabled:
+            return "(none — disabled)"
+        return "(not set yet)"
+
+    def _capture_listen_hint(self) -> str:
+        cur = self.var_capture_hotkey.get().strip()
+        if not cur:
+            return "(not set yet)"
+        friendly = _capture_token_to_mouse_label(cur.lower())
+        return friendly if friendly else _format_hotkey_plain_display(cur)
+
+    def _open_key_listen_dialog(
+        self,
+        title: str,
+        on_capture: _ListenCb,
+        *,
+        current_display: str,
+        use_event_modifiers: bool = True,
+    ) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(title)
         dlg.resizable(False, False)
         # Two-value -pady on tk.Label is rejected on some Windows Tk builds; use pack(pady=…) instead.
+        tk.Label(dlg, text="Current shortcut", fg="#666").pack(padx=24, pady=(16, 4))
         tk.Label(
             dlg,
-            text="Press the shortcut you want.\nEscape cancels.",
+            text=current_display,
+            justify=tk.CENTER,
+            wraplength=400,
+        ).pack(padx=24, pady=(0, 14))
+        tk.Label(
+            dlg,
+            text="Press a new shortcut to replace it.\nEscape closes without changing.",
             justify=tk.CENTER,
             wraplength=360,
-        ).pack(padx=24, pady=(16, 10))
-        tk.Label(dlg, text="Keys are captured in this window.", fg="#777").pack(padx=16, pady=(0, 12))
+        ).pack(padx=24, pady=(0, 10))
+        if not use_event_modifiers:
+            tk.Label(
+                dlg,
+                text="Capture uses the key alone (no Ctrl/Alt/Shift added by the recorder).",
+                fg="#555",
+                justify=tk.CENTER,
+                wraplength=380,
+            ).pack(padx=20, pady=(0, 8))
+        tk.Label(dlg, text="Keys are read in this window only.", fg="#777").pack(padx=16, pady=(0, 12))
 
         def close() -> None:
             try:
@@ -755,7 +851,7 @@ class ConfigPanel(tk.Toplevel):
             if event.keysym == "Escape":
                 close()
                 return
-            hk = tk_key_event_to_hotkey(event)
+            hk = tk_key_event_to_hotkey(event, use_event_modifiers=use_event_modifiers)
             if hk:
                 on_capture(hk)
                 close()
@@ -767,16 +863,37 @@ class ConfigPanel(tk.Toplevel):
         dlg.after(120, dlg.focus_force)
 
     def _sync_capture_mouse_combo_display(self) -> None:
-        raw = self.var_capture_hotkey.get().strip().lower()
-        lbl = _capture_token_to_mouse_label(raw)
-        if lbl:
-            self.var_capture_mouse_combo.set(lbl)
-        else:
-            self.var_capture_mouse_combo.set(_CAPTURE_MOUSE_COMBO_PLACEHOLDER)
+        """Refresh combobox. Must not trigger <<ComboboxSelected>> — that can overwrite
+        var_capture_hotkey with a stale mouse pick on Windows when values/set run."""
+        if not getattr(self, "_cb_capture_mouse", None):
+            return
+        cb = self._cb_capture_mouse
+        raw_stored = self.var_capture_hotkey.get().strip()
+        ml = raw_stored.lower()
+        mouse_lbl = _capture_token_to_mouse_label(ml)
+        mouse_only = [lbl for lbl, _ in _CAPTURE_MOUSE_CHOICES]
+
+        cb.unbind("<<ComboboxSelected>>")
+        try:
+            if mouse_lbl:
+                cb.configure(values=mouse_only)
+                self.var_capture_mouse_combo.set(mouse_lbl)
+            else:
+                kb_line = (
+                    f"Keyboard: {_format_hotkey_plain_display(raw_stored)}"
+                    if raw_stored
+                    else "Keyboard: (not set — click Listen ↑)"
+                )
+                cb.configure(values=[kb_line, *mouse_only])
+                self.var_capture_mouse_combo.set(kb_line)
+        except tk.TclError:
+            pass
+        finally:
+            cb.bind("<<ComboboxSelected>>", self._on_capture_mouse_combo_selected)
 
     def _on_capture_mouse_combo_selected(self, _evt=None) -> None:
-        choice = self.var_capture_mouse_combo.get().strip()
-        if choice == _CAPTURE_MOUSE_COMBO_PLACEHOLDER:
+        choice = (self.var_capture_mouse_combo.get() or "").strip()
+        if choice.lower().startswith("keyboard"):
             return
         tok = _CAPTURE_LABEL_TO_TOKEN.get(choice)
         if tok:
@@ -785,45 +902,82 @@ class ConfigPanel(tk.Toplevel):
     def _listen_capture_hotkey(self) -> None:
         def apply(hk: str) -> None:
             self.var_capture_hotkey.set(hk.strip())
-            self._sync_capture_mouse_combo_display()
 
-        self._open_key_listen_dialog("Record capture shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record capture shortcut",
+            apply,
+            current_display=self._capture_listen_hint(),
+            use_event_modifiers=False,
+        )
 
     def _listen_exit_hotkey(self) -> None:
         def apply(hk: str) -> None:
             self.var_exit_hotkey.set(hk.strip())
 
-        self._open_key_listen_dialog("Record quit shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record quit shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(self.var_exit_hotkey.get()),
+        )
 
     def _listen_settings_hotkey(self) -> None:
         def apply(hk: str) -> None:
             self.var_settings_hotkey.set(hk.strip())
 
-        self._open_key_listen_dialog("Record Settings shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record Settings shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(self.var_settings_hotkey.get()),
+        )
 
     def _listen_lens_settings_hotkey(self) -> None:
         def apply(hk: str) -> None:
             self.var_lens_settings_hotkey.set(hk.strip())
 
-        self._open_key_listen_dialog("Record quick Lens-settings shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record quick Lens-settings shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(self.var_lens_settings_hotkey.get()),
+        )
 
     def _listen_lens_hk_resize_w(self) -> None:
         def apply(hk: str) -> None:
             self.var_lens_hk_resize_w.set(hk.strip())
 
-        self._open_key_listen_dialog("Record widen-width shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record widen-width shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(
+                self.var_lens_hk_resize_w.get(),
+                optional_disabled=True,
+            ),
+        )
 
     def _listen_lens_hk_resize_h_up(self) -> None:
         def apply(hk: str) -> None:
             self.var_lens_hk_resize_h_up.set(hk.strip())
 
-        self._open_key_listen_dialog("Record height-increase shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record height-increase shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(
+                self.var_lens_hk_resize_h_up.get(),
+                optional_disabled=True,
+            ),
+        )
 
     def _listen_lens_hk_resize_h_dn(self) -> None:
         def apply(hk: str) -> None:
             self.var_lens_hk_resize_h_dn.set(hk.strip())
 
-        self._open_key_listen_dialog("Record height-decrease shortcut", apply)
+        self._open_key_listen_dialog(
+            "Record height-decrease shortcut",
+            apply,
+            current_display=self._shortcut_listen_hint(
+                self.var_lens_hk_resize_h_dn.get(),
+                optional_disabled=True,
+            ),
+        )
 
     def _validate(self) -> str | None:
         shape = self.var_lens_shape.get().strip().lower()
@@ -931,6 +1085,8 @@ class ConfigPanel(tk.Toplevel):
 
         self._merge_lens_into_config(d)
         if self._lens_only:
+            if str(d.get("capture_hotkey") or "").strip():
+                d.pop("hotkey", None)
             return d
 
         d["popup_font_size"] = int(self.var_popup_font.get())

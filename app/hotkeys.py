@@ -87,8 +87,18 @@ def _compose_mods_and_main(mod_bits: list[str], main: str) -> str:
     return "+".join(mod_bits + [main])
 
 
-def tk_key_event_to_hotkey(event: TkEvent) -> str | None:
-    """Build storage string from a Tk KeyPress; None until a non-modifier key is pressed."""
+def tk_key_event_to_hotkey(
+    event: TkEvent,
+    *,
+    use_event_modifiers: bool = True,
+) -> str | None:
+    """Build storage string from a Tk KeyPress; None until a non-modifier key is pressed.
+
+    When use_event_modifiers is False (e.g. capture hotkey), modifiers from event.state
+    are ignored so the stored binding is exactly the non-modifier key (Delete, F12, …).
+    This avoids bogus <ctrl>+ on Windows Tk and matches “single key” capture shortcuts.
+    Chord shortcuts still work when True (default): real Ctrl/Shift/Alt presses are reflected.
+    """
 
     keysym = (event.keysym or "").strip()
     ks_num = getattr(event, "keysym_num", None)
@@ -111,23 +121,24 @@ def tk_key_event_to_hotkey(event: TkEvent) -> str | None:
     if keysym == "Escape":
         return None
 
-    try:
-        state = int(event.state or 0)
-    except (TypeError, ValueError):
-        state = 0
-
-    SHIFT = 0x0001
-    CONTROL = 0x0004
-    ALT_WIN = 0x20000
-    CONTROL_EXT = 0x40000
-
     mods: list[str] = []
-    if bool(state & CONTROL) or bool(state & CONTROL_EXT):
-        mods.append("<ctrl>")
-    if bool(state & SHIFT):
-        mods.append("<shift>")
-    if bool(state & ALT_WIN):
-        mods.append("<alt>")
+    if use_event_modifiers:
+        try:
+            state = int(event.state or 0)
+        except (TypeError, ValueError):
+            state = 0
+
+        SHIFT = 0x0001
+        CONTROL = 0x0004
+        ALT_WIN = 0x20000
+        CONTROL_EXT = 0x40000
+
+        if bool(state & CONTROL) or bool(state & CONTROL_EXT):
+            mods.append("<ctrl>")
+        if bool(state & SHIFT):
+            mods.append("<shift>")
+        if bool(state & ALT_WIN):
+            mods.append("<alt>")
 
     def finish(main_segment: str) -> str | None:
         if not main_segment:
