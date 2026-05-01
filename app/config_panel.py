@@ -429,7 +429,7 @@ class ConfigPanel(tk.Toplevel):
             side=tk.LEFT,
             padx=_SETTINGS_ROW_LABEL_GAP,
         )
-        self.var_popup_maxw = tk.IntVar(value=int(self._data.get("popup_max_width", 480)))
+        self.var_popup_maxw = tk.IntVar(value=int(self._data.get("popup_max_width", 680)))
         tk.Spinbox(row3, from_=240, to=900, increment=10, textvariable=self.var_popup_maxw, width=8).pack(
             side=tk.LEFT
         )
@@ -482,7 +482,7 @@ class ConfigPanel(tk.Toplevel):
             justify=tk.LEFT,
         ).pack(anchor="w", padx=8, pady=(0, 4))
 
-        qa_fr = tk.LabelFrame(tab, text="Quick glossary / context from popup")
+        qa_fr = tk.LabelFrame(tab, text="Quick OCR replacement from popup")
         qa_fr.pack(fill=tk.X, pady=(8, 0))
         self.var_popup_quick_append = tk.BooleanVar(
             value=bool(self._data.get("popup_quick_append", False)),
@@ -491,8 +491,10 @@ class ConfigPanel(tk.Toplevel):
             qa_fr,
             variable=self.var_popup_quick_append,
             text=(
-                "Translation popups stay minimal; click the + icon (top-right) to open "
-                "Names & glossary / Series context append for the OCR line — active Reading profile only."
+                "When on: the + strip on translation popups adds a form to save an OCR replacement rule "
+                "(match → replace, whole-word) into the active Reading profile — same rules as Settings → Translation → OCR replacements. "
+                "The expanded panel always offers “Correct English” + Re-translate when that makes sense "
+                "(even when this box is off)."
             ),
             fg="#444",
             wraplength=500,
@@ -606,7 +608,13 @@ class ConfigPanel(tk.Toplevel):
         self._series_profiles: dict[str, dict] = copy.deepcopy(td.get("series_profiles") or {})
         if not self._series_profiles:
             self._series_profiles = {
-                "default": {"label": "Default", "context": "", "series_name": "", "glossary": ""},
+                "default": {
+                    "label": "Default",
+                    "context": "",
+                    "series_name": "",
+                    "glossary": "",
+                    "text_corrections": [],
+                },
             }
         raw_act = td.get("active_series")
         if isinstance(raw_act, str) and raw_act.strip() == "":
@@ -692,6 +700,96 @@ class ConfigPanel(tk.Toplevel):
             justify=tk.LEFT,
         ).pack(anchor="w", padx=8, pady=(0, 6))
 
+        corr_lf = tk.LabelFrame(
+            tab,
+            text="OCR replacements  (this series only — run before translation)",
+        )
+        corr_lf.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        tk.Label(
+            corr_lf,
+            text=(
+                "Replace garbled or Japanese honorific transliterations so the model sees plain English. "
+                "For ordinary English names, turn on Match case so Aerial (character) does not change aerial (adjective). "
+                'Honorifics / all-caps OCR: leave Match case off. Turn off Whole word only for typos inside longer tokens.'
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(8, 4))
+
+        tree_fr = tk.Frame(corr_lf)
+        tree_fr.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
+        self._corrections_tree = ttk.Treeview(
+            tree_fr,
+            columns=("match", "replace", "whole", "mcase"),
+            show="headings",
+            height=5,
+            selectmode="browse",
+        )
+        self._corrections_tree.heading("match", text="Match (OCR)")
+        self._corrections_tree.heading("replace", text="Replace with")
+        self._corrections_tree.heading("whole", text="Whole word")
+        self._corrections_tree.heading("mcase", text="Match case")
+        self._corrections_tree.column("match", width=128, stretch=True)
+        self._corrections_tree.column("replace", width=168, stretch=True)
+        self._corrections_tree.column("whole", width=76, stretch=False, anchor=tk.CENTER)
+        self._corrections_tree.column("mcase", width=76, stretch=False, anchor=tk.CENTER)
+        vsb = ttk.Scrollbar(tree_fr, orient=tk.VERTICAL, command=self._corrections_tree.yview)
+        self._corrections_tree.configure(yscrollcommand=vsb.set)
+        self._corrections_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        add_fr = tk.Frame(corr_lf)
+        add_fr.pack(fill=tk.X, padx=6, pady=(0, 8))
+        tk.Label(add_fr, text="Match:").pack(side=tk.LEFT, padx=(0, 4))
+        self._var_corr_match = tk.StringVar()
+        tk.Entry(add_fr, textvariable=self._var_corr_match, width=18).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(add_fr, text="Replace:").pack(side=tk.LEFT, padx=(0, 4))
+        self._var_corr_replace = tk.StringVar()
+        tk.Entry(add_fr, textvariable=self._var_corr_replace, width=22).pack(side=tk.LEFT, padx=(0, 8))
+        self._var_corr_whole = tk.BooleanVar(value=True)
+        tk.Checkbutton(add_fr, text="Whole word", variable=self._var_corr_whole).pack(side=tk.LEFT, padx=(0, 8))
+        self._var_corr_case = tk.BooleanVar(value=False)
+        tk.Checkbutton(add_fr, text="Match case", variable=self._var_corr_case).pack(side=tk.LEFT, padx=(0, 8))
+
+        def _corr_add() -> None:
+            if self._series_active_key == "":
+                return
+            m = self._var_corr_match.get().strip()
+            if not m:
+                messagebox.showwarning("OCR replacements", "Enter text to match.", parent=self)
+                return
+            r = self._var_corr_replace.get()
+            ww = self._var_corr_whole.get()
+            cs = self._var_corr_case.get()
+            self._corrections_tree.insert(
+                "",
+                tk.END,
+                values=(m, r, "Yes" if ww else "No", "Yes" if cs else "No"),
+            )
+            self._var_corr_match.set("")
+            self._var_corr_replace.set("")
+
+        def _corr_remove() -> None:
+            sel = self._corrections_tree.selection()
+            if not sel:
+                return
+            self._corrections_tree.delete(sel[0])
+
+        ttk.Button(add_fr, text="Add rule", command=_corr_add).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(add_fr, text="Delete selected row", command=_corr_remove).pack(side=tk.LEFT)
+        self._corrections_tree.bind("<Delete>", lambda _e: _corr_remove())
+        self._corrections_tree.bind("<BackSpace>", lambda _e: _corr_remove())
+
+        tk.Label(
+            corr_lf,
+            text="Delete: select a row, then “Delete selected row” or press Delete. Click OK / Save in this window to write changes to your config file.",
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+            anchor="w",
+        ).pack(anchor="w", padx=8, pady=(0, 4))
+
         self._load_profile_to_editor(self._series_active_key)
 
         lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
@@ -745,15 +843,38 @@ class ConfigPanel(tk.Toplevel):
                 "context": ctx,
                 "series_name": sn,
                 "glossary": gloss,
+                "text_corrections": self._corrections_list_from_tree(),
             }
             self._series_profiles[self._series_active_key] = p
             return
         p["context"] = ctx
         p["series_name"] = sn
         p["glossary"] = gloss
+        p["text_corrections"] = self._corrections_list_from_tree()
         lab = str(p.get("label", "")).strip()
         if not lab:
             p["label"] = sn or self._series_active_key
+
+    def _corrections_list_from_tree(self) -> list[dict]:
+        if not hasattr(self, "_corrections_tree"):
+            return []
+        out: list[dict] = []
+        for iid in self._corrections_tree.get_children():
+            vals = self._corrections_tree.item(iid, "values")
+            if not vals or len(vals) < 3:
+                continue
+            m = str(vals[0] or "").strip()
+            if not m:
+                continue
+            r = str(vals[1] or "")
+            w = str(vals[2] or "").strip().lower()
+            ww = w not in ("no", "n", "0", "false")
+            mc = ""
+            if len(vals) >= 4:
+                mc = str(vals[3] or "").strip().lower()
+            cs = mc not in ("no", "n", "0", "false", "")
+            out.append({"match": m, "replace": r, "whole_word": ww, "case_sensitive": cs})
+        return out
 
     def _load_profile_to_editor(self, key: str) -> None:
         self._series_active_key = key
@@ -770,6 +891,26 @@ class ConfigPanel(tk.Toplevel):
         self.txt_glossary.delete("1.0", "end")
         self.txt_glossary.insert("1.0", gloss)
         self.var_series_name.set(sn)
+        if hasattr(self, "_corrections_tree"):
+            for ch in self._corrections_tree.get_children():
+                self._corrections_tree.delete(ch)
+            if key and isinstance(prof, dict):
+                raw_c = prof.get("text_corrections")
+                if isinstance(raw_c, list):
+                    for item in raw_c:
+                        if not isinstance(item, dict):
+                            continue
+                        m = str(item.get("match", "") or "").strip()
+                        if not m:
+                            continue
+                        r = str(item.get("replace", "") or "")
+                        ww = bool(item.get("whole_word", True))
+                        cs = bool(item.get("case_sensitive", False))
+                        self._corrections_tree.insert(
+                            "",
+                            tk.END,
+                            values=(m, r, "Yes" if ww else "No", "Yes" if cs else "No"),
+                        )
         self._sync_series_delete_button()
 
     def _on_series_pick_changed(self, _evt=None) -> None:
@@ -796,7 +937,13 @@ class ConfigPanel(tk.Toplevel):
         self._persist_profile_from_editor()
         name = str(name).strip()
         slug = slugify_series_key(name, frozenset(self._series_profiles.keys()))
-        self._series_profiles[slug] = {"label": name, "context": "", "series_name": name, "glossary": ""}
+        self._series_profiles[slug] = {
+            "label": name,
+            "context": "",
+            "series_name": name,
+            "glossary": "",
+            "text_corrections": [],
+        }
         self._series_active_key = slug
         self._rebuild_series_combo()
         self._load_profile_to_editor(slug)

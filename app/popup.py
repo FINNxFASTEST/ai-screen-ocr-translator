@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -27,21 +28,22 @@ def _rgb_tuple(color: str) -> tuple[int, int, int]:
 
 
 def _fit_text_columns(text: str, font: tkfont.Font, ch_w: int, max_width_px: int) -> int:
-    """Text width in characters: shrink to content when it fits, else cap at max_width_px."""
+    """Text widget width in character columns: use full max width for wrapped prose; stay compact for one short line."""
     cap = max(8, max_width_px // max(1, ch_w))
     if not (text or "").strip():
         return min(cap, 14)
-    widest = max(font.measure(line) for line in text.split("\n"))
+    lines = text.split("\n")
+    widest = max((font.measure(line) for line in lines), default=0)
     slack = 28  # widget padx + rounding vs font.measure
+    # Hard line breaks or long wrapped lines: use full reading width so we don't force extra wraps.
+    if len(lines) > 1 or widest + slack > max_width_px * 0.72:
+        return cap
+    # Single short line: narrower card
     if widest + slack <= max_width_px:
         target_px = min(max_width_px, widest + slack)
         cols = max(1, (target_px + ch_w - 1) // ch_w)
         return min(cols, cap)
     return cap
-
-
-_QUICK_ROW_LABELS = ("Names & glossary", "Series context")
-_QUICK_FIELD_BY_LABEL = dict(zip(_QUICK_ROW_LABELS, ("glossary", "context")))
 
 
 class TranslationPopup:
@@ -52,10 +54,11 @@ class TranslationPopup:
         translated: str,
         cx: int,
         cy: int,
-        config: dict,
+        config: dict[str, Any],
         *,
         series_key: str = "",
-        on_quick_append: Callable[[str, str], str] | None = None,
+        on_quick_correction: Callable[[str, str, bool, bool], str] | None = None,
+        on_retranslate: Callable[[str], None] | None = None,
         allow_quick_note: bool = True,
     ):
         self.root = root
@@ -75,7 +78,7 @@ class TranslationPopup:
         self._cfg_bg = config.get("popup_bg_color", _DEFAULT_BG)
         self._cfg_fg = config.get("popup_translation_fg", _DEFAULT_THAI)
 
-        max_width_px = int(config.get("popup_max_width", 480))
+        max_width_px = int(config.get("popup_max_width", 680))
         opacity = float(config.get("popup_opacity", 1.0))
         opacity = max(0.25, min(1.0, opacity))
 
@@ -92,21 +95,30 @@ class TranslationPopup:
         self._quick_gap = 4
         self._quick_actual_h = 0
         self._quick_panel: tk.Frame | None = None
-        self._ent_for_focus = None
+        self._ent_for_focus: tk.Entry | None = None
         self._preset_for_focus = ""
+        self._source_fix_widget: tk.Text | None = None
 
-        wants_quick_raw = bool(
+        err = (translated or "").strip().startswith("[Error")
+        has_orig = bool(str(original or "").strip())
+        self._can_quick_correction = bool(
             allow_quick_note
             and config.get("popup_quick_append", False)
-            and callable(on_quick_append)
+            and callable(on_quick_correction)
             and str(series_key or "").strip()
-            and str(original or "").strip()
-            and not (translated or "").strip().startswith("[Error")
+            and has_orig
+            and not err
         )
-        self._wants_quick = wants_quick_raw
-        self._on_quick_append = on_quick_append
+        self._can_fix = bool(
+            allow_quick_note and has_orig and not err and callable(on_retranslate)
+        )
+        self._wants_expand = self._can_quick_correction or self._can_fix
+        self._on_quick_correction = on_quick_correction
+        self._on_retranslate = on_retranslate
         self._series_key = series_key
         self._original_for_quick = original
+        self._translation_y = PADDING
+        self._ocr_preview_cap = max(200, int(config.get("popup_ocr_source_max_chars", 1200)))
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -169,19 +181,32 @@ class TranslationPopup:
 
         tw_raw = self._txt_widget.winfo_reqwidth()
         th_raw = self._txt_widget.winfo_reqheight()
+        content_cap_px = max_width_px + 32
         # Prefer measured Tk sizes (wrap-aware); cap width; avoid extra vertical slack.
-        tw = max(24, min(max_width_px + 32, tw_raw))
+        tw_compact = max(24, min(content_cap_px, tw_raw))
         th = max(th_raw, nl * line_h + 6)
         self._txt_widget.pack_forget()
 
-        self._tw = tw
+        self._tw_compact = tw_compact
+        self._cols_compact = chars_wide
+        if self._wants_expand:
+            self._tw_expanded = max(tw_compact, content_cap_px)
+            self._cols_expanded = max(
+                chars_wide, max(1, (content_cap_px + ch_w - 1) // ch_w)
+            )
+        else:
+            self._tw_expanded = tw_compact
+            self._cols_expanded = chars_wide
+
+        self._tw = tw_compact
         self._th = th
 
-        strip = _QUICK_ICON_STRIP_EXTRA if wants_quick_raw else 0
-        card_w = tw + 2 * PADDING + strip
+        strip = _QUICK_ICON_STRIP_EXTRA if self._wants_expand else 0
+        self._strip_w = strip
+        card_w = tw_compact + 2 * PADDING + strip
         self._card_w = card_w
 
-        compact_h = PADDING + th + PADDING
+        compact_h = self._translation_y + th + PADDING
 
         bg_lbl = self._apply_card_surface(
             card_w,
@@ -190,11 +215,13 @@ class TranslationPopup:
             bg_col=self._cfg_bg,
         )
 
-        self._txt_widget.place(x=PADDING, y=PADDING, width=tw, height=th)
+        self._txt_widget.place(
+            x=PADDING, y=self._translation_y, width=tw_compact, height=th
+        )
         self._txt_widget.tkraise()
 
         self._quick_icon_btn: tk.Label | None = None
-        if wants_quick_raw:
+        if self._wants_expand:
             ifont = tkfont.Font(family="Segoe UI", size=11, weight="bold")
             self._quick_icon_btn = tk.Label(
                 self.win,
@@ -230,7 +257,7 @@ class TranslationPopup:
         self.win.update_idletasks()
         self._position(self._anchor_cx, self._anchor_cy)
 
-        self._after_id = self.root.after(self.auto_close_ms, self.close)
+        self._schedule_auto_close()
 
     def _make_card_photo(
         self,
@@ -300,10 +327,27 @@ class TranslationPopup:
             x = max(PADDING + 4, right_most)
         btn.place(x=x, y=PADDING + 2)
 
-    def _ensure_quick_built(self) -> None:
-        if self._quick_panel is not None or not self._wants_quick or not callable(self._on_quick_append):
+    def _apply_compact_dimensions(self) -> None:
+        """Narrow translation strip (fits short Thai); used when + is collapsed."""
+        if not self._wants_expand:
             return
-        inner_w = self._card_w - 2 * PADDING
+        self._tw = self._tw_compact
+        self._card_w = self._tw_compact + 2 * PADDING + self._strip_w
+        self._txt_widget.configure(width=self._cols_compact)
+
+    def _apply_expanded_dimensions(self) -> None:
+        """Full popup_max_width strip for quick OCR replacements / correct-English underneath +."""
+        if not self._wants_expand:
+            return
+        self._tw = self._tw_expanded
+        self._card_w = self._tw_expanded + 2 * PADDING + self._strip_w
+        self._txt_widget.configure(width=self._cols_expanded)
+
+    def _ensure_quick_built(self) -> None:
+        if self._quick_panel is not None or not self._wants_expand:
+            return
+        # Match translation column width (exclude + icon strip — was inflating layout incorrectly).
+        inner_w = max(280, self._card_w - 2 * PADDING - self._strip_w)
 
         preset = ((self._original_for_quick or "").strip())[:500]
         self._preset_for_focus = preset
@@ -313,75 +357,221 @@ class TranslationPopup:
 
         small = tkfont.Font(family="Segoe UI", size=max(9, self.font_size - 2))
         fr = tk.Frame(self.win, bg=bg_col, highlightthickness=0)
-        hdr = tk.Frame(fr, bg=bg_col)
-        hdr.pack(fill=tk.X, pady=(0, 4))
-        tk.Label(hdr, text="Add line to:", bg=bg_col, fg=trans_fg, font=small).pack(side=tk.LEFT, padx=(0, 6))
 
-        var_target = tk.StringVar(value=_QUICK_ROW_LABELS[0])
-        ttk.Combobox(
-            hdr,
-            textvariable=var_target,
-            values=list(_QUICK_ROW_LABELS),
-            state="readonly",
-            width=24,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        oc_raw = str(self._original_for_quick or "").strip()
+        muted = "#9aafbf"
+        # Read-only OCR line only under + ; skip if editable "Correct English" box is shown.
+        if oc_raw and not oc_raw.lower().startswith("(no text") and not self._can_fix:
+            n = len(oc_raw)
+            cap = self._ocr_preview_cap
+            preview = oc_raw if n <= cap else oc_raw[: cap - 1] + "…"
+            tk.Label(
+                fr,
+                text=f"Source (English) — OCR / sent to translator ({n} chars)",
+                bg=bg_col,
+                fg=trans_fg,
+                font=small,
+                anchor="w",
+            ).pack(fill=tk.X, pady=(0, 2))
+            tk.Label(
+                fr,
+                text=preview,
+                bg=bg_col,
+                fg=muted,
+                font=small,
+                anchor="w",
+                justify=tk.LEFT,
+                wraplength=max(220, inner_w - 16),
+            ).pack(fill=tk.X, pady=(0, 8))
 
-        ent_local = tk.Entry(
-            fr,
-            fg=trans_fg,
-            bg=bg_col,
-            insertbackground=trans_fg,
-            font=small,
-            bd=1,
-            relief=tk.GROOVE,
-            highlightthickness=1,
-            highlightbackground=accent,
-            highlightcolor=accent,
-        )
-        ent_local.pack(fill=tk.X, pady=(0, 6))
-        ent_local.insert(0, preset)
+        if self._can_quick_correction:
+            tk.Label(
+                fr,
+                text="Add OCR replacement (active Reading profile):",
+                bg=bg_col,
+                fg=trans_fg,
+                font=small,
+                anchor="w",
+            ).pack(fill=tk.X, pady=(0, 4))
 
-        tk.Label(
-            fr,
-            text=f'Saves to "{self._series_key}" in config. Full editor: Settings → AI.',
-            fg="#8a9ba8",
-            bg=bg_col,
-            font=small,
-            anchor="w",
-            wraplength=max(220, inner_w - 16),
-            justify="left",
-        ).pack(fill=tk.X, pady=(0, 6))
+            row_m = tk.Frame(fr, bg=bg_col)
+            row_m.pack(fill=tk.X, pady=(0, 4))
+            tk.Label(row_m, text="Match:", bg=bg_col, fg=trans_fg, font=small, width=10, anchor="w").pack(
+                side=tk.LEFT, padx=(0, 4)
+            )
+            ent_match = tk.Entry(
+                row_m,
+                fg=trans_fg,
+                bg=bg_col,
+                insertbackground=trans_fg,
+                font=small,
+                bd=1,
+                relief=tk.GROOVE,
+                highlightthickness=1,
+                highlightbackground=accent,
+                highlightcolor=accent,
+            )
+            ent_match.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        bar = tk.Frame(fr, bg=bg_col)
-        bar.pack(fill=tk.X)
-        status_lbl = tk.Label(bar, text="", bg=bg_col, fg=trans_fg, font=small, anchor="w")
-        status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            row_r = tk.Frame(fr, bg=bg_col)
+            row_r.pack(fill=tk.X, pady=(0, 4))
+            tk.Label(row_r, text="Replace:", bg=bg_col, fg=trans_fg, font=small, width=10, anchor="w").pack(
+                side=tk.LEFT, padx=(0, 4)
+            )
+            ent_replace = tk.Entry(
+                row_r,
+                fg=trans_fg,
+                bg=bg_col,
+                insertbackground=trans_fg,
+                font=small,
+                bd=1,
+                relief=tk.GROOVE,
+                highlightthickness=1,
+                highlightbackground=accent,
+                highlightcolor=accent,
+            )
+            ent_replace.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        def _do_append_local():
-            if not callable(self._on_quick_append):
-                return
-            status_lbl.config(text="", fg=trans_fg)
-            pick = var_target.get()
-            field_key = _QUICK_FIELD_BY_LABEL.get(pick, "glossary")
-            err_msg = self._on_quick_append(field_key, ent_local.get())
-            if err_msg:
-                status_lbl.config(text=err_msg, fg="#ff7777")
-            else:
-                status_lbl.config(text="Saved.", fg=accent)
+            opts_fr = tk.Frame(fr, bg=bg_col)
+            opts_fr.pack(fill=tk.X, pady=(2, 2))
+            var_whole = tk.BooleanVar(value=True)
+            tk.Checkbutton(
+                opts_fr,
+                text="Whole word",
+                variable=var_whole,
+                bg=bg_col,
+                fg=trans_fg,
+                activebackground=bg_col,
+                activeforeground=trans_fg,
+                selectcolor=bg_col,
+                anchor="w",
+                font=small,
+            ).pack(side=tk.LEFT, padx=(0, 16))
+            var_match_case = tk.BooleanVar(value=False)
+            tk.Checkbutton(
+                opts_fr,
+                text="Match case (e.g. name Aerial, not word aerial)",
+                variable=var_match_case,
+                bg=bg_col,
+                fg=trans_fg,
+                activebackground=bg_col,
+                activeforeground=trans_fg,
+                selectcolor=bg_col,
+                anchor="w",
+                font=small,
+            ).pack(side=tk.LEFT)
 
-        tk.Button(
-            bar,
-            text="Append & save",
-            command=_do_append_local,
-            font=small,
-            bg="#2d2d2d",
-            fg=trans_fg,
-            activebackground="#3d3d3d",
-            activeforeground=trans_fg,
-            relief=tk.FLAT,
-            padx=8,
-            pady=2,
-        ).pack(side=tk.RIGHT)
+            tk.Label(
+                fr,
+                text=(
+                    f'Saved into Settings → Translation → OCR replacements for '
+                    f'"{self._series_key}". Same match options update the rule.'
+                ),
+                fg="#8a9ba8",
+                bg=bg_col,
+                font=small,
+                anchor="w",
+                wraplength=max(220, inner_w - 16),
+                justify="left",
+            ).pack(fill=tk.X, pady=(0, 6))
+
+            bar = tk.Frame(fr, bg=bg_col)
+            bar.pack(fill=tk.X)
+            status_lbl = tk.Label(bar, text="", bg=bg_col, fg=trans_fg, font=small, anchor="w")
+            status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def _save_rule_local():
+                if not callable(self._on_quick_correction):
+                    return
+                status_lbl.config(text="", fg=trans_fg)
+                m = ent_match.get().strip()
+                r_raw = ent_replace.get()
+                err_msg = self._on_quick_correction(
+                    m, r_raw, var_whole.get(), var_match_case.get()
+                )
+                if err_msg:
+                    status_lbl.config(text=err_msg, fg="#ff7777")
+                else:
+                    status_lbl.config(text="Saved.", fg=accent)
+
+            tk.Button(
+                bar,
+                text="Save rule",
+                command=_save_rule_local,
+                font=small,
+                bg="#2d2d2d",
+                fg=trans_fg,
+                activebackground="#3d3d3d",
+                activeforeground=trans_fg,
+                relief=tk.FLAT,
+                padx=8,
+                pady=2,
+            ).pack(side=tk.RIGHT)
+
+            ent_match.insert(0, preset)
+            self._ent_for_focus = ent_match
+
+        if self._can_quick_correction and self._can_fix:
+            tk.Frame(fr, height=8, bg=bg_col).pack(fill=tk.X)
+
+        if self._can_fix and callable(self._on_retranslate):
+            tk.Label(
+                fr,
+                text="Correct English (OCR), then re-translate:",
+                bg=bg_col,
+                fg=trans_fg,
+                font=small,
+                anchor="w",
+            ).pack(fill=tk.X, pady=(0, 4))
+
+            src_text = tk.Text(
+                fr,
+                height=4,
+                wrap=tk.WORD,
+                font=small,
+                fg=trans_fg,
+                bg=bg_col,
+                insertbackground=trans_fg,
+                bd=1,
+                relief=tk.GROOVE,
+                highlightthickness=1,
+                highlightbackground=accent,
+                highlightcolor=accent,
+                padx=4,
+                pady=4,
+            )
+            src_text.pack(fill=tk.BOTH, expand=True)
+            src_text.insert("1.0", (self._original_for_quick or "").strip())
+
+            bar_rt = tk.Frame(fr, bg=bg_col)
+            bar_rt.pack(fill=tk.X, pady=(6, 0))
+            rt_status = tk.Label(bar_rt, text="", bg=bg_col, fg=trans_fg, font=small, anchor="w")
+            rt_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def _do_retranslate_local():
+                raw = src_text.get("1.0", "end").strip()
+                if not raw:
+                    rt_status.config(text="Enter English text to translate.", fg="#ff7777")
+                    return
+                rt_status.config(text="Translating…", fg=accent)
+                rt_btn.config(state=tk.DISABLED)
+                self._on_retranslate(raw)
+
+            rt_btn = tk.Button(
+                bar_rt,
+                text="Re-translate",
+                command=_do_retranslate_local,
+                font=small,
+                bg="#2d2d2d",
+                fg=trans_fg,
+                activebackground="#3d3d3d",
+                activeforeground=trans_fg,
+                relief=tk.FLAT,
+                padx=8,
+                pady=2,
+            )
+            rt_btn.pack(side=tk.RIGHT)
+            self._source_fix_widget = src_text
 
         fr.place(in_=self.win, x=-8000, y=0, width=inner_w)
         self.win.update_idletasks()
@@ -390,10 +580,11 @@ class TranslationPopup:
         fr.place_forget()
 
         self._quick_panel = fr
-        self._ent_for_focus = ent_local
 
     def _collapse_quick(self) -> None:
-        compact_h = PADDING + self._th + PADDING
+        self._apply_compact_dimensions()
+
+        compact_h = self._translation_y + self._th + PADDING
 
         old_bg = getattr(self, "_bg_lbl_widget", None)
         if old_bg is not None:
@@ -415,7 +606,9 @@ class TranslationPopup:
         if self._quick_panel is not None:
             self._quick_panel.place_forget()
 
-        self._txt_widget.place(x=PADDING, y=PADDING, width=self._tw, height=self._th)
+        self._txt_widget.place(
+            x=PADDING, y=self._translation_y, width=self._tw, height=self._th
+        )
         self._txt_widget.tkraise()
         if self._quick_icon_btn is not None:
             self._quick_icon_btn.config(text=_QUICK_ICON_COLLAPSED)
@@ -436,15 +629,21 @@ class TranslationPopup:
         self.win.geometry(f"{self._card_w}x{compact_h}")
         self.win.update_idletasks()
         self._position(self._anchor_cx, self._anchor_cy)
+        self._schedule_auto_close()
 
     def _expand_quick(self) -> None:
+        if not self._wants_expand:
+            return
+
+        self._pause_auto_close()
+        self._apply_expanded_dimensions()
         self._ensure_quick_built()
         if self._quick_panel is None:
             return
 
         qg = self._quick_gap
         qp = self._quick_panel
-        iw = self._card_w - 2 * PADDING
+        iw = max(280, self._card_w - 2 * PADDING - self._strip_w)
         qp.place(in_=self.win, x=-8000, y=0, width=iw)
         self.win.update_idletasks()
         qh = qp.winfo_reqheight()
@@ -452,7 +651,7 @@ class TranslationPopup:
             self._quick_actual_h = qh
         qp.place_forget()
 
-        expanded_h = PADDING + self._th + qg + self._quick_actual_h + PADDING
+        expanded_h = self._translation_y + self._th + qg + self._quick_actual_h + PADDING
 
         old_bg = getattr(self, "_bg_lbl_widget", None)
         if old_bg is not None:
@@ -471,10 +670,14 @@ class TranslationPopup:
         self._bg_lbl_widget = bg_lbl
         self._expanded = True
 
-        self._txt_widget.place(x=PADDING, y=PADDING, width=self._tw, height=self._th)
+        self._txt_widget.place(
+            x=PADDING, y=self._translation_y, width=self._tw, height=self._th
+        )
         self._txt_widget.tkraise()
 
-        self._quick_panel.place(x=PADDING, y=PADDING + self._th + qg, width=iw)
+        self._quick_panel.place(
+            x=PADDING, y=self._translation_y + self._th + qg, width=iw
+        )
         self._quick_panel.tkraise()
 
         if self._quick_icon_btn is not None:
@@ -497,14 +700,18 @@ class TranslationPopup:
         self.win.update_idletasks()
         self._position(self._anchor_cx, self._anchor_cy)
 
-        fn = getattr(self, "_ent_for_focus", None)
+        ent = getattr(self, "_ent_for_focus", None)
         pref = getattr(self, "_preset_for_focus", "") or ""
+        src_w = getattr(self, "_source_fix_widget", None)
 
         def _focus_entry():
             try:
-                if fn is not None:
-                    fn.focus_set()
-                    fn.icursor(len(pref))
+                if self._can_quick_correction and ent is not None:
+                    ent.focus_set()
+                    ent.icursor(len(pref))
+                elif self._can_fix and src_w is not None:
+                    src_w.focus_set()
+                    src_w.mark_set(tk.INSERT, "end")
             except tk.TclError:
                 pass
 
@@ -531,6 +738,18 @@ class TranslationPopup:
 
         self.win.geometry(f"+{x}+{y}")
         self.win.focus_force()
+
+    def _pause_auto_close(self) -> None:
+        if self._after_id:
+            try:
+                self.root.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+
+    def _schedule_auto_close(self) -> None:
+        self._pause_auto_close()
+        self._after_id = self.root.after(self.auto_close_ms, self.close)
 
     def close(self):
         if self._after_id:

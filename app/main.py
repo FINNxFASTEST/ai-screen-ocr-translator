@@ -21,8 +21,13 @@ from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.translator import translate
-from app.memory import MemoryStore
-from app.series_config import append_translate_profile_note, get_active_series_translation
+from app.memory import MemoryStore, semantic_hints_for_translate
+from app.series_config import (
+    append_translate_text_correction,
+    apply_text_corrections,
+    get_active_series_translation,
+    get_series_profile,
+)
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 USER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.user.json"
@@ -85,6 +90,7 @@ class App:
 
         self.lens = LensWindow(self.root, self.config)
         self._busy = False
+        self._retranslate_busy = False
         self._current_popup: TranslationPopup | None = None
         self._settings_panel = None
         self._skip_next_panel_restore = False
@@ -486,6 +492,8 @@ class App:
             translate_cfg = self.config.get("translate", {})
             prompt_template = translate_cfg.get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
             series_key, context = get_active_series_translation(self.config)
+            profile = get_series_profile(self.config, series_key)
+            original = apply_text_corrections(original, profile)
 
             mem_cfg = self.config.get("memory", {})
             cached = None
@@ -495,8 +503,14 @@ class App:
                 if cached:
                     spinner.update("Translating ... [memory hit]")
                 else:
-                    top_k = int(mem_cfg.get("top_k", 3))
-                    memory_pairs = self._memory.search(original, top_k=top_k, series_key=series_key)
+                    min_hint = int(mem_cfg.get("min_source_chars_for_hints", 64))
+                    memory_pairs = semantic_hints_for_translate(
+                        self._memory,
+                        original,
+                        series_key,
+                        top_k=int(mem_cfg.get("top_k", 3)),
+                        min_source_chars=min_hint,
+                    )
 
             if cached:
                 translated = cached
@@ -531,7 +545,14 @@ class App:
             self.root.after(0, lambda: self.lens.set_loading(False))
             self.root.after(0, self.lens.show)
 
-    def _persist_translate_note(self, series_key: str, field: str, line: str) -> str:
+    def _persist_text_correction(
+        self,
+        series_key: str,
+        match: str,
+        replace: str,
+        whole_word: bool,
+        case_sensitive: bool,
+    ) -> str:
         path = effective_config_path()
         try:
             with open(path, encoding="utf-8") as f:
@@ -540,7 +561,14 @@ class App:
             return f"Could not read config: {e}"
         except json.JSONDecodeError as e:
             return f"Invalid config JSON: {e}"
-        ok, err = append_translate_profile_note(data, series_key, field, line)
+        ok, err = append_translate_text_correction(
+            data,
+            series_key,
+            match,
+            replace,
+            whole_word=whole_word,
+            case_sensitive=case_sensitive,
+        )
         if not ok:
             return err
         try:
@@ -566,8 +594,15 @@ class App:
         quick_note: bool = True,
     ):
         cb = (
-            (lambda f, t, sk=series_key: self._persist_translate_note(sk, f, t))
+            (lambda m, r, ww, cs, sk=series_key: self._persist_text_correction(sk, m, r, ww, cs))
             if series_key
+            else None
+        )
+        on_rt = (
+            (lambda text, x=cx, y=cy, sk=series_key: self._schedule_retranslate(text, x, y, sk))
+            if quick_note
+            and str(original or "").strip()
+            and not (translated or "").strip().startswith("[Error")
             else None
         )
         self._current_popup = TranslationPopup(
@@ -578,10 +613,101 @@ class App:
             cy,
             self.config,
             series_key=series_key,
-            on_quick_append=cb,
+            on_quick_correction=cb,
+            on_retranslate=on_rt,
             allow_quick_note=quick_note,
         )
         self.root.after(30, self._raise_current_popup)
+
+    def _schedule_retranslate(self, text: str, cx: int, cy: int, series_key: str) -> None:
+        stripped = text.strip()
+        if not stripped or self._retranslate_busy:
+            return
+        self._retranslate_busy = True
+        threading.Thread(
+            target=self._retranslate_worker,
+            args=(stripped, cx, cy, series_key),
+            daemon=True,
+        ).start()
+
+    def _retranslate_worker(self, original: str, cx: int, cy: int, series_key: str) -> None:
+        spinner = Spinner()
+        debug = bool(self.config.get("debug", False))
+        model = self.config.get("model", "docker.io/ai/gemma3:4B-F16")
+        try:
+            spinner.start("Re-translating ...")
+            translate_cfg = self.config.get("translate", {})
+            prompt_template = translate_cfg.get(
+                "prompt",
+                "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+            )
+            _, context = get_active_series_translation(self.config)
+            ai_url = self.config.get("ai_url", "http://localhost:12434")
+            prof = get_series_profile(self.config, series_key)
+            original = apply_text_corrections(original.strip(), prof)
+
+            mem_cfg = self.config.get("memory", {})
+            cached = None
+            memory_pairs = None
+            if self._memory is not None:
+                cached = self._memory.get_exact(original, series_key)
+                if cached:
+                    spinner.update("Re-translating ... [memory hit]" if debug else "Re-translating ...")
+                else:
+                    min_hint = int(mem_cfg.get("min_source_chars_for_hints", 64))
+                    memory_pairs = semantic_hints_for_translate(
+                        self._memory,
+                        original,
+                        series_key,
+                        top_k=int(mem_cfg.get("top_k", 3)),
+                        min_source_chars=min_hint,
+                    )
+
+            if cached:
+                translated = cached
+            else:
+                if debug:
+                    spinner.update(f"Re-translating ... [{model}]")
+                translated = translate(
+                    original, ai_url, model, prompt_template, context, memory_pairs
+                )
+                if self._memory is not None and not translated.startswith("[Error"):
+                    threading.Thread(
+                        target=self._memory.save,
+                        args=(original, translated, series_key),
+                        daemon=True,
+                    ).start()
+
+            preview = original[:48] + ("..." if len(original) > 48 else "")
+            spinner.stop(f"  Re-done  \"{preview}\"")
+            self.root.after(
+                0,
+                lambda o=original, t=translated, x=cx, y=cy, sk=series_key: self._finish_retranslate(
+                    o, t, x, y, sk
+                ),
+            )
+        except Exception as e:
+            spinner.stop(f"  Error: {e}" if debug else "  Re-translate failed.")
+            msg = f"[Error: {e}]"
+            self.root.after(
+                0,
+                lambda o=original, x=cx, y=cy, sk=series_key, m=msg: self._finish_retranslate(
+                    o, m, x, y, sk
+                ),
+            )
+
+    def _finish_retranslate(
+        self, original: str, translated: str, cx: int, cy: int, series_key: str
+    ) -> None:
+        self._retranslate_busy = False
+        if self._current_popup:
+            try:
+                self._current_popup.close()
+            except tk.TclError:
+                pass
+            self._current_popup = None
+        quick = bool(not (translated or "").strip().startswith("[Error"))
+        self._show_popup(original, translated, cx, cy, series_key, quick_note=quick)
 
     def _show_empty(self, cx: int, cy: int):
         self._current_popup = TranslationPopup(

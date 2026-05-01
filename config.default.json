@@ -22,12 +22,13 @@
   "popup_bg_color": "#1e1e1e",
   "popup_accent_color": "#00e6ff",
   "popup_translation_fg": "#ffffff",
-  "popup_max_width": 480,
+  "popup_max_width": 680,
   "popup_border_radius": 10,
   "popup_border_width": 1,
   "popup_wrap_mode": "word",
   "popup_mouse_offset_x": 55,
   "popup_mouse_offset_y": 55,
+  "popup_ocr_source_max_chars": 1200,
   "popup_quick_append": false,
   "exit_hotkey": "<shift>+q",
   "show_exit_button": true,
@@ -40,7 +41,8 @@
         "label": "Default",
         "context": "",
         "series_name": "",
-        "glossary": ""
+        "glossary": "",
+        "text_corrections": []
       }
     }
   },
@@ -62,6 +64,11 @@
     "min_size": 8,
     "fix_case": true,
     "debug": true
+  },
+  "memory": {
+    "enabled": false,
+    "top_k": 3,
+    "min_source_chars_for_hints": 64
   },
   "setup_done": true
 }

@@ -1,5 +1,29 @@
 import requests
 
+_MAX_SERIES_CONTEXT_CHARS = 12000
+_MAX_HINT_SOURCE_CHARS = 180
+_MAX_HINT_TRANS_CHARS = 280
+
+_TASK_PREAMBLE = (
+    "Task: The user message is ONE short English fragment (comic/UI line). "
+    "Reply with only the Thai translation of that fragment — roughly matching how long the English is. "
+    "Do not summarize, retell, or translate long background blocks below; those are reference for names/terms only. "
+    "Do not continue a story or add explanations."
+)
+
+_CONTEXT_WRAP = (
+    "Series reference only (terminology/glossary — not the line to translate; do not output this as your answer):\n"
+)
+
+
+def _ellipsize(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if len(s) <= max_chars:
+        return s
+    if max_chars < 2:
+        return s[:max_chars]
+    return s[: max_chars - 1].rstrip() + "…"
+
 
 def translate(
     text: str,
@@ -14,18 +38,22 @@ def translate(
 
     prompt = prompt_template.format(text=text)
 
-    system_parts = []
-    if context.strip():
-        system_parts.append(context.strip())
+    blocks: list[str] = [_TASK_PREAMBLE]
+    ctx = context.strip()
+    if ctx:
+        blocks.append(_CONTEXT_WRAP + _ellipsize(ctx, _MAX_SERIES_CONTEXT_CHARS))
     if memory_pairs:
-        lines = ["Past translations for consistency:"]
+        lines = [
+            "Style hints only (earlier comic lines; translate only the user message English, "
+            "do not treat hints as something to reproduce in full):"
+        ]
         for src, tr in memory_pairs:
-            lines.append(f'- "{src}" → "{tr}"')
-        system_parts.append("\n".join(lines))
+            src_e = _ellipsize(src, _MAX_HINT_SOURCE_CHARS)
+            tr_e = _ellipsize(tr, _MAX_HINT_TRANS_CHARS)
+            lines.append(f'- "{src_e}" → "{tr_e}"')
+        blocks.append("\n".join(lines))
 
-    messages = []
-    if system_parts:
-        messages.append({"role": "system", "content": "\n\n".join(system_parts)})
+    messages = [{"role": "system", "content": "\n\n".join(blocks)}]
     messages.append({"role": "user", "content": prompt})
 
     try:

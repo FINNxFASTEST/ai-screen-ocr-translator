@@ -11,6 +11,55 @@ DEFAULT_SERIES_KEY = "default"
 READING_COMBO_NONE = "(none)"
 
 
+def get_series_profile(config: dict[str, Any], series_key: str) -> dict[str, Any] | None:
+    """Return the series_profiles entry for series_key, or None if missing / invalid."""
+    sk = str(series_key or "").strip()
+    if not sk:
+        return None
+    t = config.get("translate") or {}
+    profiles = t.get("series_profiles")
+    if not isinstance(profiles, dict):
+        return None
+    p = profiles.get(sk)
+    return p if isinstance(p, dict) else None
+
+
+def apply_text_corrections(text: str, profile: dict[str, Any] | None) -> str:
+    """
+    Apply per-series find/replace rules to OCR text before translation.
+    Rules are longest-match first. whole_word uses (?<!\\w)…(?!\\w) boundaries.
+    case_sensitive (default False): match exact capitalization — use for English names vs common words (Aerial vs aerial).
+    """
+    if not (text or "").strip() or not isinstance(profile, dict):
+        return text
+    raw = profile.get("text_corrections")
+    if not isinstance(raw, list) or not raw:
+        return text
+    rules: list[tuple[str, str, bool, bool]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        m = str(item.get("match", "") or "").strip()
+        if not m:
+            continue
+        r = str(item.get("replace", "") or "")
+        ww = bool(item.get("whole_word", True))
+        cs = bool(item.get("case_sensitive", False))
+        rules.append((m, r, ww, cs))
+    if not rules:
+        return text
+    rules.sort(key=lambda x: len(x[0]), reverse=True)
+    out = text
+    for m, r, ww, cs in rules:
+        flags_prefix = "" if cs else "(?i)"
+        if ww:
+            pat = flags_prefix + r"(?<!\w)" + re.escape(m) + r"(?!\w)"
+        else:
+            pat = flags_prefix + re.escape(m)
+        out = re.sub(pat, r, out)
+    return out
+
+
 def profile_system_context(profile: dict[str, Any] | None) -> str:
     """Main series context plus optional glossary, sent as one system message block."""
     if not isinstance(profile, dict):
@@ -59,6 +108,7 @@ def migrate_translate_to_profiles(translate: dict[str, Any] | None) -> None:
             "context": str(legacy_ctx),
             "series_name": legacy_name,
             "glossary": "",
+            "text_corrections": [],
         }
     }
     translate["active_series"] = DEFAULT_SERIES_KEY
@@ -91,6 +141,68 @@ def append_translate_profile_note(
         return False, "Invalid profile data."
     cur = str(prof.get(field, "") or "").rstrip()
     prof[field] = f"{cur}\n{line}" if cur else line
+    return True, ""
+
+
+def append_translate_text_correction(
+    config: dict[str, Any],
+    series_key: str,
+    match: str,
+    replace: str,
+    *,
+    whole_word: bool = True,
+    case_sensitive: bool = False,
+) -> tuple[bool, str]:
+    """Add or update one OCR replacement rule on a profile (mutates config)."""
+    match_st = str(match or "").strip()
+    if not match_st:
+        return False, "Match text is empty."
+    replace_val = str(replace or "")
+
+    translate = config.setdefault("translate", {})
+    migrate_translate_to_profiles(translate)
+    profiles = translate.get("series_profiles")
+
+    if not isinstance(profiles, dict) or not profiles:
+        return False, "No series profiles in config."
+    sk = str(series_key or "").strip()
+    if not sk or sk not in profiles:
+        return False, 'Choose an active manga profile in Settings (not "(none)") to save replacements.'
+    prof = profiles[sk]
+    if not isinstance(prof, dict):
+        return False, "Invalid profile data."
+
+    raw_corr = prof.get("text_corrections")
+    corr: list[Any] = list(raw_corr) if isinstance(raw_corr, list) else []
+    norm = match_st.lower()
+    updated = False
+    for i, item in enumerate(corr):
+        if not isinstance(item, dict):
+            continue
+        im_raw = str(item.get("match", "") or "").strip()
+        im_low = im_raw.lower()
+        iww = bool(item.get("whole_word", True))
+        ics = bool(item.get("case_sensitive", False))
+        keys_match = (im_raw == match_st) if case_sensitive else (im_low == norm)
+        if keys_match and iww == whole_word and ics == case_sensitive:
+            corr[i] = {
+                "match": match_st,
+                "replace": replace_val,
+                "whole_word": whole_word,
+                "case_sensitive": case_sensitive,
+            }
+            updated = True
+            break
+    if not updated:
+        corr.append(
+            {
+                "match": match_st,
+                "replace": replace_val,
+                "whole_word": whole_word,
+                "case_sensitive": case_sensitive,
+            }
+        )
+    prof["text_corrections"] = corr
     return True, ""
 
 

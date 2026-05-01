@@ -115,3 +115,24 @@ class MemoryStore:
 
     def close(self) -> None:
         self._conn.close()
+
+
+def semantic_hints_for_translate(
+    store: MemoryStore | None,
+    source_text: str,
+    series_key: str,
+    *,
+    top_k: int = 3,
+    min_source_chars: int = 64,
+) -> list[tuple[str, str]] | None:
+    """Fuzzy recall rows above similarity threshold — skipped for short OCR (too many bad matches).
+
+    Keeps unrelated long „past translations” out of short-bubble captions.
+    """
+    if store is None:
+        return None
+    s = source_text.strip()
+    if not s or len(s) < max(16, min_source_chars):
+        return None
+    rows = store.search(s, top_k=top_k, series_key=series_key)
+    return rows if rows else None
