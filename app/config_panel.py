@@ -34,7 +34,6 @@ _PADDLE_LANG_CODES = (
     "korean",
     "french",
     "german",
-    "spanish",
     "arabic",
     "cyrillic",
     "latin",
@@ -1584,7 +1583,7 @@ class ConfigPanel(tk.Toplevel):
         ).pack(side=tk.LEFT)
         tk.Label(
             pf,
-            text="PaddleOCR recognition model (e.g. en, japan, korean). Type a code if yours is not listed.",
+            text="PaddleOCR recognition model (e.g. en, japan, korean, latin for Latin script). Type a code if yours is not listed.",
             fg="#666",
             wraplength=480,
             justify=tk.LEFT,

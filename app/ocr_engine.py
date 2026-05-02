@@ -225,6 +225,8 @@ def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
     debug = cfg.get("debug", False)
 
     paddle_lang = str(cfg.get("paddle_lang") or "en").strip() or "en"
+    if paddle_lang.lower() == "spanish":
+        paddle_lang = "latin"
     reader = get_reader(paddle_lang)
 
     tag = datetime.now().strftime("%H%M%S_%f")[:9]

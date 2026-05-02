@@ -1,6 +1,20 @@
 # Screen OCR Translator
 
-Captures text from your screen with a circular or rectangular lens, runs **OCR** (PaddleOCR or a vision HTTP server), translates **English → Thai** via a local **Docker Model Runner** endpoint, and shows the result in a popup.
+Captures text from your screen with a circular or rectangular lens, runs **OCR** (PaddleOCR or a vision HTTP server), translates from a **configurable source language** to a **target language** (defaults **English → Thai**) via a local **Docker Model Runner** endpoint, and shows the result in a popup.
+
+## Multi-language translation
+
+**Settings → Translation → Languages** sets the **source (OCR) language** and **target language** (any pair you describe in plain language, e.g. Japanese → English). The translation prompt uses **`{source_lang}`**, **`{target_lang}`**, and **`{text}`** so the model knows what to translate.
+
+For **PaddleOCR**, set **`Paddle language`** on **Settings → OCR** (`ocr.paddle_lang` in config) to the Paddle language code for your script (e.g. `en`, `japan`, `korean`, `ch`). That picks the right recognition model; it is separate from the human-readable source language label used for translation.
+
+**If your on-screen text is not English**, **AI Vision OCR** (`ocr.engine`: **`ai_vision`**) or **olmOCR** (`olm_ocr`) is usually **much better** than PaddleOCR alone. PaddleOCR is a classical pipeline per language code: stylized fonts, furigana, vertical text, and noisy comic panels are easy to misread. **AI Vision** sends the cropped image to a multimodal model that “reads” the pixels and returns text in context, so it generalizes across scripts and layouts without relying on a fixed recognizer tuned mostly for common cases. **olmOCR** (HTTP) follows the same idea on your GPU server. Use Paddle when you want fast local Latin/English-style runs; switch to vision OCR when accuracy on Japanese, Korean, Chinese, or mixed UI matters more.
+
+## How to use
+
+**Before you start:** Install **[Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)** (required for translation and optional AI Vision OCR). Open Docker Desktop and enable **Docker Model Runner** in its settings. See also [Install Docker Desktop on Windows](https://docs.docker.com/desktop/setup/install/windows-install/) if you need setup help.
+
+From the project folder, run **`start.bat`** (double-click it, or run it in Command Prompt / PowerShell). That launches the app. On first launch, the setup wizard can install Python dependencies and pull Docker models if needed.
 
 ---
 
@@ -8,7 +22,7 @@ Captures text from your screen with a circular or rectangular lens, runs **OCR**
 
 - **Windows** (capture / overlays rely on Win32 APIs)
 - **Python 3.10+**
-- **Docker Desktop** with **Docker Model Runner** enabled (translation + optional **AI Vision** OCR)
+- **Docker Desktop** (required) — [Download Docker Desktop](https://www.docker.com/products/docker-desktop/) · [Windows install guide](https://docs.docker.com/desktop/setup/install/windows-install/). Enable **Docker Model Runner** in Docker Desktop (translation + optional **AI Vision** OCR).
 
 **Optional OCR backends**
 
@@ -33,7 +47,7 @@ docker model pull docker.io/ai/gemma4:4B    # AI Vision OCR
 
 **AI Vision OCR** (`ocr.engine`: `ai_vision`) expects a **multimodal** model. Defaults use **`docker.io/ai/gemma4:E2B`** for translation and **`docker.io/ai/gemma4:4B`** for vision OCR. Some hub builds (e.g. certain `gemma3n` variants) are **text-only** — pick a vision-capable artifact in **Settings** if you switch models.
 
-Or use **`start.bat`** if your repo ships it.
+The first-run wizard (when you start via **`start.bat`**) can pull these for you.
 
 ### 3. Optional — olmOCR behind vLLM in Docker
 
@@ -52,6 +66,8 @@ docker compose -f docker-compose.vllm.yml logs -f olmocr-vllm
 ---
 
 ## Run
+
+Same as **`start.bat`**:
 
 ```bash
 python main.py
@@ -81,11 +97,14 @@ Effective config file is the **first** that exists:
 
 `config.user.json` → **`config.default.json`** → `config.json`
 
-Use **Settings** to edit most values. Important OCR-related keys:
+Use **Settings** to edit most values. Important keys:
 
 | Key | Description |
 |-----|-------------|
+| `translate.source_lang` / `translate.target_lang` | Human-readable language names for prompts and UI (defaults English / Thai). |
+| `translate.prompt` | Template with `{text}` (required) and optional `{source_lang}`, `{target_lang}`. |
 | `ocr.engine` | **`paddleocr`** (local PaddleOCR), **`ai_vision`** (Docker vision chat via `ai_url`), **`olm_ocr`** (OpenAI-compatible server + custom prompt). If missing: falls back from `ai_ocr.enabled`. |
+| `ocr.paddle_lang` | PaddleOCR language code when using **`paddleocr`** (e.g. `en`, `japan`, `korean`). |
 | `ocr.*` | Shared image preprocessing (`upscale`, `contrast`, `binarize`, `debug`, etc.). |
 | `ai_url` | Docker Model Runner base URL (translation + AI Vision OCR). |
 | `model` | Translation model id. |
@@ -100,8 +119,14 @@ Use **Settings** to edit most values. Important OCR-related keys:
 {
   "ai_url": "http://localhost:12434",
   "model": "docker.io/ai/gemma4:E2B",
+  "translate": {
+    "source_lang": "English",
+    "target_lang": "Thai",
+    "prompt": "Translate the following {source_lang} text to {target_lang}. Reply with only the {target_lang} translation, nothing else.\n\n{text}"
+  },
   "ocr": {
-    "engine": "paddleocr"
+    "engine": "paddleocr",
+    "paddle_lang": "en"
   },
   "ai_ocr": {
     "enabled": false,
@@ -135,6 +160,7 @@ manga-translator/
 │   ├── memory.py         # Optional SQLite + embedding recall
 │   └── ...
 ├── main.py               # Entry: wizard + app.main.run()
+├── start.bat             # Windows: runs `python main.py`
 ├── docker-compose.yml    # Docker Model Runner (provider entries)
 ├── docker-compose.vllm.yml  # Optional GPU vLLM for olmOCR (HTTP)
 ├── config.default.json   # Default settings template
