@@ -1,15 +1,16 @@
 from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, ResolvedEndpoint, chat_complete
+from app.lang_prefs import (
+    DEFAULT_SOURCE_LANG,
+    DEFAULT_TARGET_LANG,
+    DEFAULT_TRANSLATE_PROMPT,
+    format_translate_prompt,
+    memory_hint_header,
+    task_preamble,
+)
 
 _MAX_SERIES_CONTEXT_CHARS = 12000
 _MAX_HINT_SOURCE_CHARS = 180
 _MAX_HINT_TRANS_CHARS = 280
-
-_TASK_PREAMBLE = (
-    "Task: The user message is ONE short English fragment (comic/UI line). "
-    "Reply with only the Thai translation of that fragment — roughly matching how long the English is. "
-    "Do not summarize, retell, or translate long background blocks below; those are reference for names/terms only. "
-    "Do not continue a story or add explanations."
-)
 
 _CONTEXT_WRAP = (
     "Series reference only (terminology/glossary — not the line to translate; do not output this as your answer):\n"
@@ -28,35 +29,37 @@ def _ellipsize(s: str, max_chars: int) -> str:
 def translate(
     text: str,
     endpoint: ResolvedEndpoint,
-    prompt_template: str = "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+    prompt_template: str = DEFAULT_TRANSLATE_PROMPT,
     context: str = "",
     memory_pairs: list[tuple[str, str]] | None = None,
     *,
     lean: bool = False,
+    source_lang: str = DEFAULT_SOURCE_LANG,
+    target_lang: str = DEFAULT_TARGET_LANG,
 ) -> str:
     if not text.strip():
         return ""
 
-    prompt = prompt_template.format(text=text)
+    src = (source_lang or DEFAULT_SOURCE_LANG).strip() or DEFAULT_SOURCE_LANG
+    tgt = (target_lang or DEFAULT_TARGET_LANG).strip() or DEFAULT_TARGET_LANG
+    preamble = task_preamble(src, tgt)
+    prompt = format_translate_prompt(prompt_template, text, src, tgt)
 
     # Lean: same user `{text}` prompt as full mode + same task preamble only — no series context or memory hints.
     # (Sending user-only caused overly literal Thai, e.g. "I see" → "ฉันเห็น", because the preamble steers comic/UI tone.)
     if lean:
         messages = [
-            {"role": "system", "content": _TASK_PREAMBLE},
+            {"role": "system", "content": preamble},
             {"role": "user", "content": prompt},
         ]
         timeout = 45
     else:
-        blocks: list[str] = [_TASK_PREAMBLE]
+        blocks: list[str] = [preamble]
         ctx = context.strip()
         if ctx:
             blocks.append(_CONTEXT_WRAP + _ellipsize(ctx, _MAX_SERIES_CONTEXT_CHARS))
         if memory_pairs:
-            lines = [
-                "Style hints only (earlier comic lines; translate only the user message English, "
-                "do not treat hints as something to reproduce in full):"
-            ]
+            lines = [memory_hint_header(src)]
             for src, tr in memory_pairs:
                 src_e = _ellipsize(src, _MAX_HINT_SOURCE_CHARS)
                 tr_e = _ellipsize(tr, _MAX_HINT_TRANS_CHARS)

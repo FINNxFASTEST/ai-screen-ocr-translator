@@ -36,7 +36,9 @@
     "integration": {
       "provider": "docker_local"
     },
-    "prompt": "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
+    "source_lang": "English",
+    "target_lang": "Thai",
+    "prompt": "Translate the following {source_lang} text to {target_lang}. Reply with only the {target_lang} translation, nothing else.\n\n{text}",
     "quick_translate": false,
     "active_series": "default",
     "series_profiles": {
@@ -79,7 +81,8 @@
     "mag_ratio": 2.0,
     "min_size": 8,
     "fix_case": true,
-    "debug": true
+    "debug": true,
+    "paddle_lang": "en"
   },
   "memory": {
     "enabled": false,

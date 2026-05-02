@@ -116,6 +116,8 @@ class TranslationPopup:
         self._on_quick_correction = on_quick_correction
         self._on_retranslate = on_retranslate
         self._series_key = series_key
+        tr_cfg = config.get("translate") or {}
+        self._source_lang_label = str(tr_cfg.get("source_lang") or "English").strip() or "English"
         self._original_for_quick = original
         self._translation_y = PADDING
         self._ocr_preview_cap = max(200, int(config.get("popup_ocr_source_max_chars", 1200)))
@@ -367,7 +369,7 @@ class TranslationPopup:
             preview = oc_raw if n <= cap else oc_raw[: cap - 1] + "…"
             tk.Label(
                 fr,
-                text=f"Source (English) — OCR / sent to translator ({n} chars)",
+                text=f"Source ({self._source_lang_label}) — OCR / sent to translator ({n} chars)",
                 bg=bg_col,
                 fg=trans_fg,
                 font=small,
@@ -517,7 +519,7 @@ class TranslationPopup:
         if self._can_fix and callable(self._on_retranslate):
             tk.Label(
                 fr,
-                text="Correct English (OCR), then re-translate:",
+                text=f"Correct {self._source_lang_label} (OCR), then re-translate:",
                 bg=bg_col,
                 fg=trans_fg,
                 font=small,
@@ -551,7 +553,10 @@ class TranslationPopup:
             def _do_retranslate_local():
                 raw = src_text.get("1.0", "end").strip()
                 if not raw:
-                    rt_status.config(text="Enter English text to translate.", fg="#ff7777")
+                    rt_status.config(
+                        text=f"Enter {self._source_lang_label} text to translate.",
+                        fg="#ff7777",
+                    )
                     return
                 rt_status.config(text="Translating…", fg=accent)
                 rt_btn.config(state=tk.DISABLED)

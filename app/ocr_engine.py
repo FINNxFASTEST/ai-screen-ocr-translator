@@ -19,6 +19,7 @@ for _noisy in ("ppocr", "paddleocr", "paddle", "paddle.fluid"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 _reader = None
+_reader_lang: str | None = None
 _DEBUG_DIR = Path(__file__).resolve().parents[1] / "debug"
 
 # OCR tuning defaults — can be overridden via config.json "ocr" key
@@ -35,8 +36,13 @@ _OCR_DEFAULTS = {
 }
 
 
-def get_reader():
-    global _reader
+def get_reader(lang: str = "en"):
+    """Return a PaddleOCR reader for the given language code (e.g. en, japan, korean)."""
+    global _reader, _reader_lang
+    code = (lang or "en").strip() or "en"
+    if _reader is not None and _reader_lang != code:
+        _reader = None
+        _reader_lang = None
     if _reader is None:
         import paddle
         try:
@@ -49,9 +55,10 @@ def get_reader():
         with contextlib.redirect_stderr(io.StringIO()):
             _reader = PaddleOCR(
                 use_angle_cls=True,
-                lang="en",
+                lang=code,
                 show_log=False,
             )
+        _reader_lang = code
     return _reader
 
 
@@ -217,7 +224,8 @@ def extract_text(image: Image.Image, ocr_config: dict | None = None) -> str:
     cfg = ocr_config or {}
     debug = cfg.get("debug", False)
 
-    reader = get_reader()
+    paddle_lang = str(cfg.get("paddle_lang") or "en").strip() or "en"
+    reader = get_reader(paddle_lang)
 
     tag = datetime.now().strftime("%H%M%S_%f")[:9]
     if debug:

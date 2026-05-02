@@ -23,6 +23,7 @@ from app.lens import SCROLL_STEP, LensWindow
 from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
 from app.spinner import Spinner
+from app.lang_prefs import DEFAULT_TRANSLATE_PROMPT, source_target_from_config
 from app.translator import translate
 from app.memory import MemoryStore, semantic_hints_for_translate
 from app.ai_integration import resolve_translate
@@ -552,7 +553,8 @@ class App:
                 )
             else:
                 spinner.update(f"Translating ... [{model}]" if debug else "Translating ...")
-            prompt_template = translate_cfg.get("prompt", "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}")
+            prompt_template = translate_cfg.get("prompt", DEFAULT_TRANSLATE_PROMPT)
+            src_lang, tgt_lang = source_target_from_config(self.config)
             series_key, context = get_active_series_translation(self.config)
             profile = get_series_profile(self.config, series_key)
             original = apply_text_corrections(original, profile)
@@ -587,6 +589,8 @@ class App:
                     "" if quick else context,
                     None if quick else memory_pairs,
                     lean=quick,
+                    source_lang=src_lang,
+                    target_lang=tgt_lang,
                 )
                 t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):
@@ -735,10 +739,8 @@ class App:
             spinner.start("Re-translating ...")
             translate_cfg = self.config.get("translate", {})
             quick = bool(translate_cfg.get("quick_translate", False))
-            prompt_template = translate_cfg.get(
-                "prompt",
-                "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
-            )
+            prompt_template = translate_cfg.get("prompt", DEFAULT_TRANSLATE_PROMPT)
+            src_lang, tgt_lang = source_target_from_config(self.config)
             _, context = get_active_series_translation(self.config)
             prof = get_series_profile(self.config, series_key)
             original = apply_text_corrections(original.strip(), prof)
@@ -781,6 +783,8 @@ class App:
                     "" if quick else context,
                     None if quick else memory_pairs,
                     lean=quick,
+                    source_lang=src_lang,
+                    target_lang=tgt_lang,
                 )
                 t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):
@@ -841,10 +845,11 @@ class App:
         self._show_popup(original, translated, cx, cy, series_key, quick_note=quick)
 
     def _show_empty(self, cx: int, cy: int):
+        src_lang, _ = source_target_from_config(self.config)
         self._current_popup = TranslationPopup(
             self.root,
             "(no text detected)",
-            "(point the lens at English text and try again)",
+            f"(point the lens at {src_lang} text and try again)",
             cx,
             cy,
             self.config,

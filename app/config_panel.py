@@ -24,7 +24,21 @@ from app.series_config import (
 )
 from app.lens import MAX_RADIUS, MIN_RADIUS
 from app.ai_integration import chat_complete, resolve_translate
+from app.lang_prefs import DEFAULT_TRANSLATE_PROMPT
 import requests
+
+_PADDLE_LANG_CODES = (
+    "en",
+    "ch",
+    "japan",
+    "korean",
+    "french",
+    "german",
+    "spanish",
+    "arabic",
+    "cyrillic",
+    "latin",
+)
 
 from app.hotkeys import (
     config_capture_trigger_raw,
@@ -564,7 +578,7 @@ class ConfigPanel(tk.Toplevel):
             text=(
                 "When on: the + strip on translation popups adds a form to save an OCR replacement rule "
                 "(match → replace, whole-word) into the active Reading profile — same rules as Settings → Translation → OCR replacements. "
-                "The expanded panel always offers “Correct English” + Re-translate when that makes sense "
+                "The expanded panel always offers correct-source (OCR) + Re-translate when that makes sense "
                 "(even when this box is off)."
             ),
             fg="#444",
@@ -714,6 +728,8 @@ class ConfigPanel(tk.Toplevel):
         if new_k:
             integ["api_key"] = new_k
         tr["integration"] = integ
+        tr["source_lang"] = self.var_source_lang.get().strip() or "English"
+        tr["target_lang"] = self.var_target_lang.get().strip() or "Thai"
         return {
             "ai_url": self.var_ai_url.get().strip(),
             "model": self.var_model.get().strip(),
@@ -844,6 +860,35 @@ class ConfigPanel(tk.Toplevel):
         )
         tk.Label(tab, text=key_hint, fg="#666", wraplength=520, justify=tk.LEFT).pack(anchor="w", pady=(0, 4))
         self._cb_translate_provider.bind("<<ComboboxSelected>>", self._on_translate_provider_changed)
+
+        lang_lf = tk.LabelFrame(tab, text="Languages")
+        lang_lf.pack(fill=tk.X, pady=(10, 0))
+        self.var_source_lang = tk.StringVar(
+            value=str(td.get("source_lang") or "English").strip() or "English"
+        )
+        self.var_target_lang = tk.StringVar(
+            value=str(td.get("target_lang") or "Thai").strip() or "Thai"
+        )
+        lr = tk.Frame(lang_lf)
+        lr.pack(fill=tk.X, padx=8, pady=(8, 4))
+        tk.Label(lr, text="Source (OCR) language:", width=18, anchor="w").pack(
+            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        tk.Entry(lr, textvariable=self.var_source_lang, width=22).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(lr, text="Target language:", width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Entry(lr, textvariable=self.var_target_lang, width=22).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(
+            lang_lf,
+            text=(
+                "Used in the translation system prompt, popup labels, and optional placeholders in the prompt below: "
+                "{source_lang}, {target_lang}, and {text} (required). "
+                "For PaddleOCR, set the language code on the OCR tab."
+            ),
+            fg="#666",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
         self._series_profiles: dict[str, dict] = copy.deepcopy(td.get("series_profiles") or {})
         if not self._series_profiles:
             self._series_profiles = {
@@ -1032,14 +1077,14 @@ class ConfigPanel(tk.Toplevel):
 
         self._load_profile_to_editor(self._series_active_key)
 
-        lf = tk.LabelFrame(tab, text='Translation prompt  (must contain {text})')
+        lf = tk.LabelFrame(
+            tab,
+            text="Translation prompt  (must contain {text}; optional {source_lang}, {target_lang})",
+        )
         lf.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         self.txt_translate = ScrolledText(lf, height=5, wrap=tk.WORD, font=("Consolas", 10))
         self.txt_translate.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        prompt = (self._data.get("translate") or {}).get(
-            "prompt",
-            "Translate the following English text to Thai. Reply with only the Thai translation, nothing else.\n\n{text}",
-        )
+        prompt = (self._data.get("translate") or {}).get("prompt", DEFAULT_TRANSLATE_PROMPT)
         self.txt_translate.insert("1.0", prompt)
 
         self.cmb_series_pick.bind("<<ComboboxSelected>>", self._on_series_pick_changed)
@@ -1520,9 +1565,30 @@ class ConfigPanel(tk.Toplevel):
         self.var_ocr_link = tk.DoubleVar(value=float(o.get("link_threshold", 0.3)))
         self.var_ocr_mag = tk.DoubleVar(value=float(o.get("mag_ratio", 2.0)))
         self.var_ocr_min = tk.IntVar(value=int(o.get("min_size", 8)))
+        self.var_ocr_paddle_lang = tk.StringVar(
+            value=str(o.get("paddle_lang") or "en").strip() or "en"
+        )
 
         pf = self._fr_ocr_paddle
         pf.columnconfigure(0, weight=1)
+        row_pl = tk.Frame(pf)
+        row_pl.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        tk.Label(row_pl, text="Paddle language:", width=16, anchor="w").pack(
+            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        ttk.Combobox(
+            row_pl,
+            textvariable=self.var_ocr_paddle_lang,
+            values=_PADDLE_LANG_CODES,
+            width=14,
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            pf,
+            text="PaddleOCR recognition model (e.g. en, japan, korean). Type a code if yours is not listed.",
+            fg="#666",
+            wraplength=480,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
         specs = [
             ("Upscale", self.var_ocr_upscale, 1, 4, True, 1),
             ("Contrast", self.var_ocr_contrast, 0.5, 3.0, False, 0.05),
@@ -1535,18 +1601,20 @@ class ConfigPanel(tk.Toplevel):
         ]
         for i, (name, var, lo, hi, is_int, inc) in enumerate(specs):
             fr = tk.Frame(pf)
-            fr.grid(row=i, column=0, sticky="ew", pady=2)
+            fr.grid(row=i + 2, column=0, sticky="ew", pady=2)
             tk.Label(fr, text=name + ":", width=16, anchor="w").pack(side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP)
             if is_int:
                 tk.Spinbox(fr, from_=lo, to=hi, textvariable=var, width=12).pack(side=tk.LEFT)
             else:
                 tk.Spinbox(fr, from_=lo, to=hi, increment=inc, textvariable=var, width=12).pack(side=tk.LEFT)
-        tk.Checkbutton(pf, text="Binarize", variable=self.var_ocr_binarize).grid(row=len(specs), column=0, sticky="w")
+        tk.Checkbutton(pf, text="Binarize", variable=self.var_ocr_binarize).grid(
+            row=len(specs) + 2, column=0, sticky="w"
+        )
         tk.Checkbutton(pf, text="Fix case (manga caps)", variable=self.var_ocr_fix_case).grid(
-            row=len(specs) + 1, column=0, sticky="w", pady=(4, 0)
+            row=len(specs) + 3, column=0, sticky="w", pady=(4, 0)
         )
         tk.Checkbutton(pf, text="PaddleOCR preprocess debug dumps", variable=self.var_ocr_debug).grid(
-            row=len(specs) + 2, column=0, sticky="w", pady=(4, 0)
+            row=len(specs) + 4, column=0, sticky="w", pady=(4, 0)
         )
 
         # --- AI Vision OCR (same layout order as AI / Translate: backend → URL → model → key) ---
@@ -2193,6 +2261,13 @@ class ConfigPanel(tk.Toplevel):
         tpl = self.txt_translate.get("1.0", "end")
         if "{text}" not in tpl:
             return 'Translation prompt must include the literal placeholder {text}.'
+        if not self.var_source_lang.get().strip():
+            return "Source language cannot be empty."
+        if not self.var_target_lang.get().strip():
+            return "Target language cannot be empty."
+        pl = self.var_ocr_paddle_lang.get().strip() or "en"
+        if not re.match(r"^[A-Za-z0-9_]+$", pl):
+            return "Paddle language code must contain only letters, digits, or underscore."
         qh = validate_keyboard_hotkey_string(self.var_exit_hotkey.get().strip())
         if qh:
             return f"Quit shortcut: {qh}"
@@ -2284,6 +2359,8 @@ class ConfigPanel(tk.Toplevel):
                 else ""
             )
         d["translate"]["prompt"] = self.txt_translate.get("1.0", "end").rstrip("\n")
+        d["translate"]["source_lang"] = self.var_source_lang.get().strip() or "English"
+        d["translate"]["target_lang"] = self.var_target_lang.get().strip() or "Thai"
         d["translate"]["context"] = mirror_ctx or ""
         d["translate"]["series_name"] = mirror_sn
         eff_tr = (_load_effective_config_dict().get("translate") or {})
@@ -2346,6 +2423,7 @@ class ConfigPanel(tk.Toplevel):
             "min_size": int(self.var_ocr_min.get()),
             "fix_case": bool(self.var_ocr_fix_case.get()),
             "debug": bool(self.var_ocr_debug.get()),
+            "paddle_lang": self.var_ocr_paddle_lang.get().strip() or "en",
         }
 
         d["debug"] = bool(self.var_debug.get())
