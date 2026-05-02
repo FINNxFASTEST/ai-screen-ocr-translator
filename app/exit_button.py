@@ -53,6 +53,7 @@ STATUS_ERR = "#ff4444"
 STATUS_BUSY = "#888888"
 COMIC_FG = "#a8c8ff"
 PROFILE_TEXT_MAX = 20
+ENGINES_TEXT_MAX = 56
 
 
 def _ellipsize(s: str, max_chars: int = PROFILE_TEXT_MAX) -> str:
@@ -61,6 +62,12 @@ def _ellipsize(s: str, max_chars: int = PROFILE_TEXT_MAX) -> str:
     if len(s) <= max_chars:
         return s
     return s[:max_chars] + "..."
+
+
+def _ellipsize_multiline(s: str, line_max: int) -> str:
+    if not s:
+        return ""
+    return "\n".join(_ellipsize(line, line_max) for line in s.split("\n"))
 
 
 class ExitButton:
@@ -90,6 +97,8 @@ class ExitButton:
 
         self._profile_line_full = ""
         self._comic_line_full = ""
+        self._lang_line_full = ""
+        self._engines_line_full = ""
         self._profile_expanded = False
 
         self.profile_row = tk.Frame(frame, bg=BG)
@@ -130,6 +139,27 @@ class ExitButton:
             anchor="w",
         )
         self._profile_comic_visible = False
+
+        self.profile_lang = tk.Label(
+            frame,
+            text="",
+            font=("Segoe UI", 8),
+            fg="#888888",
+            bg=BG,
+            anchor="w",
+        )
+        self._profile_lang_visible = False
+
+        self.profile_engines = tk.Label(
+            frame,
+            text="",
+            font=("Segoe UI", 8),
+            fg="#777777",
+            bg=BG,
+            anchor="w",
+            justify=tk.LEFT,
+        )
+        self._profile_engines_visible = False
 
         self.quick_row = tk.Frame(frame, bg=BG)
         self.var_quick_translate = tk.BooleanVar(value=bool(quick_translate))
@@ -285,10 +315,18 @@ class ExitButton:
         if self._on_quick_translate_change:
             self._on_quick_translate_change(bool(self.var_quick_translate.get()))
 
-    def set_profile_display(self, profile_line: str, comic_line: str) -> None:
-        """Active series profile (above Settings) and optional comic / series name."""
+    def set_profile_display(
+        self,
+        profile_line: str,
+        comic_line: str,
+        lang_line: str = "",
+        engines_line: str = "",
+    ) -> None:
+        """Profile row, comic name, languages, and OCR / translate backends in use."""
         self._profile_line_full = profile_line or ""
         self._comic_line_full = (comic_line or "").strip()
+        self._lang_line_full = (lang_line or "").strip()
+        self._engines_line_full = (engines_line or "").strip()
         self._profile_expanded = False
         self._apply_profile_labels()
 
@@ -299,18 +337,32 @@ class ExitButton:
     def _needs_expand(self) -> bool:
         pl = self._profile_line_full or ""
         cl = (self._comic_line_full or "").strip()
-        return len(pl) > PROFILE_TEXT_MAX or len(cl) > PROFILE_TEXT_MAX
+        ll = (self._lang_line_full or "").strip()
+        el = (self._engines_line_full or "").strip()
+        eng_expand = any(len(ln) > ENGINES_TEXT_MAX for ln in el.split("\n")) if el else False
+        return (
+            len(pl) > PROFILE_TEXT_MAX
+            or len(cl) > PROFILE_TEXT_MAX
+            or len(ll) > PROFILE_TEXT_MAX
+            or eng_expand
+        )
 
     def _apply_profile_labels(self):
         pl_full = self._profile_line_full or ""
         cl_full = (self._comic_line_full or "").strip()
+        lg_full = (self._lang_line_full or "").strip()
+        eng_full = (self._engines_line_full or "").strip()
 
         if self._profile_expanded:
             pl = pl_full
             ct = cl_full
+            lg = lg_full
+            eng = eng_full
         else:
             pl = _ellipsize(pl_full)
             ct = _ellipsize(cl_full) if cl_full else ""
+            lg = _ellipsize(lg_full) if lg_full else ""
+            eng = _ellipsize_multiline(eng_full, ENGINES_TEXT_MAX) if eng_full else ""
 
         self.profile_title.config(text=pl)
 
@@ -320,19 +372,42 @@ class ExitButton:
         else:
             self.profile_expand_btn.pack_forget()
 
+        if self._profile_comic_visible:
+            self.profile_comic.pack_forget()
+            self._profile_comic_visible = False
+        if self._profile_lang_visible:
+            self.profile_lang.pack_forget()
+            self._profile_lang_visible = False
+        if self._profile_engines_visible:
+            self.profile_engines.pack_forget()
+            self._profile_engines_visible = False
+
         if ct:
             self.profile_comic.config(text=ct)
-            if not self._profile_comic_visible:
-                self.profile_comic.pack(
-                    fill=tk.X,
-                    pady=(0, 4),
-                    before=self._anchor_below_profile,
-                )
-                self._profile_comic_visible = True
-        else:
-            if self._profile_comic_visible:
-                self.profile_comic.pack_forget()
-                self._profile_comic_visible = False
+            self.profile_comic.pack(
+                fill=tk.X,
+                pady=(0, 2 if (lg_full or eng_full) else 4),
+                before=self._anchor_below_profile,
+            )
+            self._profile_comic_visible = True
+
+        if lg:
+            self.profile_lang.config(text=lg)
+            self.profile_lang.pack(
+                fill=tk.X,
+                pady=(0, 2 if eng_full else 4),
+                before=self._anchor_below_profile,
+            )
+            self._profile_lang_visible = True
+
+        if eng:
+            self.profile_engines.config(text=eng)
+            self.profile_engines.pack(
+                fill=tk.X,
+                pady=(0, 4),
+                before=self._anchor_below_profile,
+            )
+            self._profile_engines_visible = True
 
     def set_always_on_top(self, enabled: bool) -> None:
         try:

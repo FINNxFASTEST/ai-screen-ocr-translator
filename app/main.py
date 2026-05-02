@@ -24,6 +24,7 @@ from app.ocr_engine import extract_text
 from app.popup import TranslationPopup
 from app.spinner import Spinner
 from app.lang_prefs import DEFAULT_TRANSLATE_PROMPT, source_target_from_config
+from app.status_labels import format_pipeline_backend_summary
 from app.translator import translate
 from app.memory import MemoryStore, semantic_hints_for_translate
 from app.ai_integration import resolve_translate
@@ -303,20 +304,23 @@ class App:
     def _refresh_exit_button_profile(self) -> None:
         if self._exit_btn is None:
             return
+        src, tgt = source_target_from_config(self.config)
+        lang_line = f"{src} → {tgt}"
+        engines_line = format_pipeline_backend_summary(self.config)
         sk, _ = get_active_series_translation(self.config)
         t = self.config.get("translate") or {}
         profiles = t.get("series_profiles")
         if not isinstance(profiles, dict):
             profiles = {}
         if not sk:
-            self._exit_btn.set_profile_display("Reading: (none)", "")
+            self._exit_btn.set_profile_display("Reading: (none)", "", lang_line, engines_line)
             return
         line1 = f"Reading: {combo_display_for_key(profiles, sk)}"
         prof = get_series_profile(self.config, sk)
         comic = ""
         if isinstance(prof, dict):
             comic = str(prof.get("series_name", "") or "").strip()
-        self._exit_btn.set_profile_display(line1, comic)
+        self._exit_btn.set_profile_display(line1, comic, lang_line, engines_line)
 
     def _open_settings(self) -> None:
         try:

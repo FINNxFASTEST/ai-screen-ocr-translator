@@ -24,7 +24,11 @@ from app.series_config import (
 )
 from app.lens import MAX_RADIUS, MIN_RADIUS
 from app.ai_integration import chat_complete, resolve_translate
-from app.lang_prefs import DEFAULT_TRANSLATE_PROMPT
+from app.lang_prefs import (
+    DEFAULT_SOURCE_LANG,
+    DEFAULT_TARGET_LANG,
+    DEFAULT_TRANSLATE_PROMPT,
+)
 import requests
 
 _PADDLE_LANG_CODES = (
@@ -685,6 +689,18 @@ class ConfigPanel(tk.Toplevel):
         k = self._translate_provider_key_from_ui()
         self.var_ai_url.set(_TRANSLATE_PROVIDER_DEFAULT_URL.get(k, "http://localhost:12434"))
 
+    def _refresh_translate_lang_summary(self) -> None:
+        if not getattr(self, "_lbl_translate_summary", None):
+            return
+        if not getattr(self, "var_source_lang", None) or not getattr(self, "var_target_lang", None):
+            return
+        src = self.var_source_lang.get().strip() or DEFAULT_SOURCE_LANG
+        tgt = self.var_target_lang.get().strip() or DEFAULT_TARGET_LANG
+        try:
+            self._lbl_translate_summary.configure(text=f"Translation: {src} → {tgt}")
+        except tk.TclError:
+            pass
+
     def _apply_provider_default_url(self, url_var: tk.StringVar, provider_key: str) -> None:
         """Set base URL to the canonical default for this backend (same idea as Translation tab)."""
         if provider_key == "inherit":
@@ -727,8 +743,8 @@ class ConfigPanel(tk.Toplevel):
         if new_k:
             integ["api_key"] = new_k
         tr["integration"] = integ
-        tr["source_lang"] = self.var_source_lang.get().strip() or "English"
-        tr["target_lang"] = self.var_target_lang.get().strip() or "Thai"
+        tr["source_lang"] = self.var_source_lang.get().strip() or DEFAULT_SOURCE_LANG
+        tr["target_lang"] = self.var_target_lang.get().strip() or DEFAULT_TARGET_LANG
         return {
             "ai_url": self.var_ai_url.get().strip(),
             "model": self.var_model.get().strip(),
@@ -860,33 +876,12 @@ class ConfigPanel(tk.Toplevel):
         tk.Label(tab, text=key_hint, fg="#666", wraplength=520, justify=tk.LEFT).pack(anchor="w", pady=(0, 4))
         self._cb_translate_provider.bind("<<ComboboxSelected>>", self._on_translate_provider_changed)
 
-        lang_lf = tk.LabelFrame(tab, text="Languages")
-        lang_lf.pack(fill=tk.X, pady=(10, 0))
         self.var_source_lang = tk.StringVar(
-            value=str(td.get("source_lang") or "English").strip() or "English"
+            value=str(td.get("source_lang") or DEFAULT_SOURCE_LANG).strip() or DEFAULT_SOURCE_LANG
         )
         self.var_target_lang = tk.StringVar(
-            value=str(td.get("target_lang") or "Thai").strip() or "Thai"
+            value=str(td.get("target_lang") or DEFAULT_TARGET_LANG).strip() or DEFAULT_TARGET_LANG
         )
-        lr = tk.Frame(lang_lf)
-        lr.pack(fill=tk.X, padx=8, pady=(8, 4))
-        tk.Label(lr, text="Source (OCR) language:", width=18, anchor="w").pack(
-            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
-        )
-        tk.Entry(lr, textvariable=self.var_source_lang, width=22).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(lr, text="Target language:", width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 8))
-        tk.Entry(lr, textvariable=self.var_target_lang, width=22).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(
-            lang_lf,
-            text=(
-                "Used in the translation system prompt, popup labels, and optional placeholders in the prompt below: "
-                "{source_lang}, {target_lang}, and {text} (required). "
-                "For PaddleOCR, set the language code on the OCR tab."
-            ),
-            fg="#666",
-            wraplength=520,
-            justify=tk.LEFT,
-        ).pack(anchor="w", padx=8, pady=(0, 8))
 
         self._series_profiles: dict[str, dict] = copy.deepcopy(td.get("series_profiles") or {})
         if not self._series_profiles:
@@ -944,9 +939,35 @@ class ConfigPanel(tk.Toplevel):
         self._btn_search_ctx = ttk.Button(lookup_row, text="Search & Fill Context", command=self._search_and_fill_context)
         self._btn_search_ctx.pack(side=tk.LEFT)
 
+        self._lbl_translate_summary = tk.Label(
+            lookup_lf,
+            text="",
+            fg="#555",
+            anchor="w",
+        )
+        self._lbl_translate_summary.pack(anchor="w", padx=8, pady=(0, 4))
+        self._refresh_translate_lang_summary()
+
+        lang_row = tk.Frame(lookup_lf)
+        lang_row.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Label(lang_row, text="Source (OCR) language:", width=18, anchor="w").pack(
+            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        tk.Entry(lang_row, textvariable=self.var_source_lang, width=22).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(lang_row, text="Target language:", width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Entry(lang_row, textvariable=self.var_target_lang, width=22).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.var_source_lang.trace_add("write", lambda *_: self._refresh_translate_lang_summary())
+        self.var_target_lang.trace_add("write", lambda *_: self._refresh_translate_lang_summary())
+
         tk.Label(
             lookup_lf,
-            text='Type a series name (e.g. "Spider-Man", "Naruto", "One Piece"), then click Search. The AI will look it up online and write a translation context for you.',
+            text=(
+                'Type a series name (e.g. "Spider-Man", "Naruto", "One Piece"), then click Search. '
+                "The AI will look it up online and write a translation context for you.\n\n"
+                "Languages: used in the translation system prompt, popup labels, and optional placeholders in the "
+                "prompt below ({source_lang}, {target_lang}, {text}). "
+                "For PaddleOCR, set the language code on the OCR tab."
+            ),
             fg="#666",
             wraplength=520,
             justify=tk.LEFT,
@@ -2358,8 +2379,8 @@ class ConfigPanel(tk.Toplevel):
                 else ""
             )
         d["translate"]["prompt"] = self.txt_translate.get("1.0", "end").rstrip("\n")
-        d["translate"]["source_lang"] = self.var_source_lang.get().strip() or "English"
-        d["translate"]["target_lang"] = self.var_target_lang.get().strip() or "Thai"
+        d["translate"]["source_lang"] = self.var_source_lang.get().strip() or DEFAULT_SOURCE_LANG
+        d["translate"]["target_lang"] = self.var_target_lang.get().strip() or DEFAULT_TARGET_LANG
         d["translate"]["context"] = mirror_ctx or ""
         d["translate"]["series_name"] = mirror_sn
         eff_tr = (_load_effective_config_dict().get("translate") or {})
