@@ -31,17 +31,117 @@ from app.lang_prefs import (
 )
 import requests
 
-_PADDLE_LANG_CODES = (
-    "en",
-    "ch",
-    "japan",
-    "korean",
-    "french",
-    "german",
-    "arabic",
-    "cyrillic",
-    "latin",
+# (code, human-readable name) pairs — all languages supported by PaddleOCR
+_PADDLE_LANGS: tuple[tuple[str, str], ...] = (
+    # East Asian
+    ("ch",           "Chinese & English"),
+    ("chinese_cht",  "Chinese Traditional"),
+    ("japan",        "Japanese"),
+    ("korean",       "Korean"),
+    # South / Southeast Asian
+    ("ta",           "Tamil"),
+    ("te",           "Telugu"),
+    ("ka",           "Kannada"),
+    ("hi",           "Hindi"),
+    ("mr",           "Marathi"),
+    ("ne",           "Nepali"),
+    ("devanagari",   "Devanagari (generic)"),
+    # Arabic / RTL
+    ("ar",           "Arabic"),
+    ("ug",           "Uyghur"),
+    ("fa",           "Persian"),
+    ("ur",           "Urdu"),
+    ("arabic",       "Arabic script (generic)"),
+    # Latin-script languages (individual models)
+    ("en",           "English"),
+    ("af",           "Afrikaans"),
+    ("az",           "Azerbaijani"),
+    ("bs",           "Bosnian"),
+    ("cs",           "Czech"),
+    ("cy",           "Welsh"),
+    ("da",           "Danish"),
+    ("de",           "German"),
+    ("german",       "German (alt)"),
+    ("es",           "Spanish"),
+    ("et",           "Estonian"),
+    ("fr",           "French"),
+    ("french",       "French (alt)"),
+    ("ga",           "Irish"),
+    ("hr",           "Croatian"),
+    ("hu",           "Hungarian"),
+    ("id",           "Indonesian"),
+    ("is",           "Icelandic"),
+    ("it",           "Italian"),
+    ("ku",           "Kurdish"),
+    ("la",           "Latin"),
+    ("lt",           "Lithuanian"),
+    ("lv",           "Latvian"),
+    ("mi",           "Maori"),
+    ("ms",           "Malay"),
+    ("mt",           "Maltese"),
+    ("nl",           "Dutch"),
+    ("no",           "Norwegian"),
+    ("oc",           "Occitan"),
+    ("pi",           "Pali"),
+    ("pl",           "Polish"),
+    ("pt",           "Portuguese"),
+    ("ro",           "Romanian"),
+    ("rs_latin",     "Serbian (Latin)"),
+    ("sk",           "Slovak"),
+    ("sl",           "Slovenian"),
+    ("sq",           "Albanian"),
+    ("sv",           "Swedish"),
+    ("sw",           "Swahili"),
+    ("tl",           "Filipino"),
+    ("tr",           "Turkish"),
+    ("uz",           "Uzbek"),
+    ("vi",           "Vietnamese"),
+    ("latin",        "Latin script (generic)"),
+    # Cyrillic-script languages
+    ("bg",           "Bulgarian"),
+    ("be",           "Belarusian"),
+    ("ru",           "Russian"),
+    ("uk",           "Ukrainian"),
+    ("mn",           "Mongolian"),
+    ("rs_cyrillic",  "Serbian (Cyrillic)"),
+    ("kk",           "Kazakh"),
+    ("ba",           "Bashkir"),
+    ("cyrillic",     "Cyrillic script (generic)"),
+    # Caucasian (Cyrillic-based)
+    ("ab",           "Abaza"),
+    ("ava",          "Avar"),
+    ("ady",          "Adyghe"),
+    ("che",          "Chechen"),
+    ("inh",          "Ingush"),
+    ("kbd",          "Kabardian"),
+    ("lbe",          "Lak"),
+    ("lez",          "Lezghian"),
 )
+
+# Display strings shown in the combobox: "English (en)", sorted A-Z by name
+_PADDLE_LANG_DISPLAY: tuple[str, ...] = tuple(
+    f"{name} ({code})"
+    for code, name in sorted(_PADDLE_LANGS, key=lambda x: x[1].lower())
+)
+# Reverse map: display string → code
+_PADDLE_DISPLAY_TO_CODE: dict[str, str] = {
+    f"{name} ({code})": code for code, name in _PADDLE_LANGS
+}
+# Forward map: code → display string (first match wins)
+_PADDLE_CODE_TO_DISPLAY: dict[str, str] = {}
+for _code, _name in _PADDLE_LANGS:
+    _PADDLE_CODE_TO_DISPLAY.setdefault(_code, f"{_name} ({_code})")
+
+
+def _parse_paddle_lang(value: str) -> str:
+    """Extract the raw PaddleOCR code from either a display string or a bare code."""
+    v = value.strip()
+    if v in _PADDLE_DISPLAY_TO_CODE:
+        return _PADDLE_DISPLAY_TO_CODE[v]
+    # Handle "Name (code)" typed manually
+    if v.endswith(")") and " (" in v:
+        return v.rsplit(" (", 1)[1][:-1].strip()
+    return v or "en"
 
 from app.hotkeys import (
     config_capture_trigger_raw,
@@ -121,14 +221,16 @@ _CAPTURE_MOUSE_TOKEN_SET = {token.lower() for _, token in _CAPTURE_MOUSE_CHOICES
 _TRANSLATE_PROVIDER_LABELS = (
     "Docker Model Runner (local)",
     "Ollama (local)",
+    "NLLB-200 (local — docker-compose.nllb.yml)",
     "OpenAI (ChatGPT API)",
     "Anthropic (Claude)",
     "Custom (OpenAI-compatible)",
 )
-_TRANSLATE_PROVIDER_KEYS = ("docker_local", "ollama", "openai", "anthropic", "openai_compat")
+_TRANSLATE_PROVIDER_KEYS = ("docker_local", "ollama", "nllb", "openai", "anthropic", "openai_compat")
 _TRANSLATE_PROVIDER_DEFAULT_URL = {
     "docker_local": "http://localhost:12434",
     "ollama": "http://localhost:11434",
+    "nllb": "http://localhost:8100",
     "openai": "https://api.openai.com",
     "anthropic": "https://api.anthropic.com",
     "openai_compat": "http://localhost:12434",
@@ -688,6 +790,8 @@ class ConfigPanel(tk.Toplevel):
     def _on_translate_provider_changed(self, _evt=None) -> None:
         k = self._translate_provider_key_from_ui()
         self.var_ai_url.set(_TRANSLATE_PROVIDER_DEFAULT_URL.get(k, "http://localhost:12434"))
+        if k == "nllb":
+            self.var_model.set("nllb-200-1.3B")
 
     def _refresh_translate_lang_summary(self) -> None:
         if not getattr(self, "_lbl_translate_summary", None):
@@ -1585,8 +1689,9 @@ class ConfigPanel(tk.Toplevel):
         self.var_ocr_link = tk.DoubleVar(value=float(o.get("link_threshold", 0.3)))
         self.var_ocr_mag = tk.DoubleVar(value=float(o.get("mag_ratio", 2.0)))
         self.var_ocr_min = tk.IntVar(value=int(o.get("min_size", 8)))
+        _saved_pl = str(o.get("paddle_lang") or "en").strip() or "en"
         self.var_ocr_paddle_lang = tk.StringVar(
-            value=str(o.get("paddle_lang") or "en").strip() or "en"
+            value=_PADDLE_CODE_TO_DISPLAY.get(_saved_pl, _saved_pl)
         )
 
         pf = self._fr_ocr_paddle
@@ -1599,12 +1704,12 @@ class ConfigPanel(tk.Toplevel):
         ttk.Combobox(
             row_pl,
             textvariable=self.var_ocr_paddle_lang,
-            values=_PADDLE_LANG_CODES,
-            width=14,
+            values=_PADDLE_LANG_DISPLAY,
+            width=32,
         ).pack(side=tk.LEFT)
         tk.Label(
             pf,
-            text="PaddleOCR recognition model (e.g. en, japan, korean, latin for Latin script). Type a code if yours is not listed.",
+            text="Select a language or type a raw PaddleOCR code (e.g. en, japan, latin). Generic script codes cover multiple languages sharing one model.",
             fg="#666",
             wraplength=480,
             justify=tk.LEFT,
@@ -2285,7 +2390,7 @@ class ConfigPanel(tk.Toplevel):
             return "Source language cannot be empty."
         if not self.var_target_lang.get().strip():
             return "Target language cannot be empty."
-        pl = self.var_ocr_paddle_lang.get().strip() or "en"
+        pl = _parse_paddle_lang(self.var_ocr_paddle_lang.get())
         if not re.match(r"^[A-Za-z0-9_]+$", pl):
             return "Paddle language code must contain only letters, digits, or underscore."
         qh = validate_keyboard_hotkey_string(self.var_exit_hotkey.get().strip())
@@ -2443,7 +2548,7 @@ class ConfigPanel(tk.Toplevel):
             "min_size": int(self.var_ocr_min.get()),
             "fix_case": bool(self.var_ocr_fix_case.get()),
             "debug": bool(self.var_ocr_debug.get()),
-            "paddle_lang": self.var_ocr_paddle_lang.get().strip() or "en",
+            "paddle_lang": _parse_paddle_lang(self.var_ocr_paddle_lang.get()),
         }
 
         d["debug"] = bool(self.var_debug.get())

@@ -1,4 +1,4 @@
-from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, ResolvedEndpoint, chat_complete
+from app.ai_integration import PROVIDER_DOCKER, PROVIDER_NLLB, PROVIDER_OLLAMA, ResolvedEndpoint, chat_complete
 from app.lang_prefs import (
     DEFAULT_SOURCE_LANG,
     DEFAULT_TARGET_LANG,
@@ -81,4 +81,8 @@ def translate(
             "not reachable" in low or "connection" in low
         ):
             return "[Error: Ollama not reachable — run ollama serve or check http://localhost:11434]"
+        if endpoint.provider == PROVIDER_NLLB and (
+            "not reachable" in low or "connection" in low
+        ):
+            return "[Error: NLLB server not running — docker compose -f docker-compose.nllb.yml up -d]"
     return out

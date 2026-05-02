@@ -15,6 +15,7 @@ PROVIDER_OPENAI = "openai"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_COMPAT = "openai_compat"
 PROVIDER_OLLAMA = "ollama"
+PROVIDER_NLLB = "nllb"
 PROVIDER_INHERIT = "inherit"
 # Legacy configs used ``llama_local`` — normalized to ``PROVIDER_OLLAMA`` when loading.
 LEGACY_PROVIDER_LLAMA_LOCAL = "llama_local"
@@ -25,6 +26,8 @@ PROVIDER_LLAMA_LOCAL = PROVIDER_OLLAMA
 _DEFAULT_OPENAI_BASE = "https://api.openai.com"
 _DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com"
 _DEFAULT_OLLAMA_BASE = "http://localhost:11434"
+_DEFAULT_NLLB_BASE = "http://localhost:8100"
+_DEFAULT_NLLB_MODEL = "nllb-200-1.3B"
 
 _ENV_OPENAI = "OPENAI_API_KEY"
 _ENV_ANTHROPIC = "ANTHROPIC_API_KEY"
@@ -175,6 +178,15 @@ def resolve_translate(config: dict) -> ResolvedEndpoint:
             base_url=_strip_base(base),
             api_key=_effective_api_key(ig, PROVIDER_COMPAT),
             model=model,
+        )
+
+    if provider == PROVIDER_NLLB:
+        base = str(ig.get("base_url") or "").strip() or _DEFAULT_NLLB_BASE
+        return ResolvedEndpoint(
+            provider=PROVIDER_NLLB,
+            base_url=_strip_base(base),
+            api_key=None,
+            model=model or _DEFAULT_NLLB_MODEL,
         )
 
     # openai_compat — custom OpenAI-compatible server
