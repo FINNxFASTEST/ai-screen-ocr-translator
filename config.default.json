@@ -89,5 +89,7 @@
     "top_k": 3,
     "min_source_chars_for_hints": 64
   },
+  "page_translate_hotkey": "<ctrl>+<shift>+p",
+  "page_upload_hotkey": "<ctrl>+<shift>+u",
   "setup_done": false
 }

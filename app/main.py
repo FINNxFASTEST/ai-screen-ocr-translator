@@ -167,6 +167,8 @@ class App:
         self._exit_btn = None
         self._sync_exit_button()
 
+        self._page_busy = False
+
         mem_cfg = self.config.get("memory", {})
         self._memory: MemoryStore | None = None
         if mem_cfg.get("enabled", False):
@@ -191,6 +193,8 @@ class App:
         self._lens_resize_width_groups: list[set] = []
         self._lens_resize_height_up_groups: list[set] = []
         self._lens_resize_height_down_groups: list[set] = []
+        self._page_translate_groups: list[set] = []
+        self._page_upload_groups: list[set] = []
         self._capture_mode = "mouse"
         self._capture_button: mouse.Button = mouse.Button.middle
         self._capture_groups: list[set] = []
@@ -231,6 +235,12 @@ class App:
         self._lens_resize_height_down_groups = _parse_hotkey_or_empty(
             self.config.get("lens_hotkey_resize_height_down"),
         )
+        self._page_translate_groups = _parse_hotkey_or_empty(
+            self.config.get("page_translate_hotkey"),
+        )
+        self._page_upload_groups = _parse_hotkey_or_empty(
+            self.config.get("page_upload_hotkey"),
+        )
         self._reload_capture_trigger()
 
     def _reload_capture_trigger(self) -> None:
@@ -267,6 +277,8 @@ class App:
                         )
                     ),
                     on_quick_translate_change=self._on_quick_translate_bar,
+                    page_translate_command=lambda: self.root.after(0, self._trigger_page_translate),
+                    page_upload_command=lambda: self.root.after(0, self._trigger_page_upload),
                 )
         else:
             if self._exit_btn is not None:
@@ -446,6 +458,16 @@ class App:
         ):
             self.root.after(0, self._open_settings)
             return
+        if self._page_translate_groups and all(
+            group & self._pressed_keys for group in self._page_translate_groups
+        ):
+            self.root.after(0, self._trigger_page_translate)
+            return
+        if self._page_upload_groups and all(
+            group & self._pressed_keys for group in self._page_upload_groups
+        ):
+            self.root.after(0, self._trigger_page_upload)
+            return
         if self._exit_groups and all(
             group & self._pressed_keys for group in self._exit_groups
         ):
@@ -472,6 +494,59 @@ class App:
             args=(spec,),
             daemon=True,
         ).start()
+
+    # --- Page translate ---
+
+    def _trigger_page_translate(self) -> None:
+        """Auto-capture: scroll the foreground window, OCR, translate, open viewer."""
+        if self._page_busy:
+            return
+        self._page_busy = True
+        self.lens.hide()
+        from app.page_translate import run_page_pipeline
+
+        run_page_pipeline(
+            self.root,
+            self.config,
+            image=None,
+            on_done=self._on_page_done,
+            on_error=self._on_page_error,
+        )
+
+    def _trigger_page_upload(self) -> None:
+        """Manual upload: open file dialog, then run the page pipeline."""
+        from app.image_upload import pick_image
+
+        img = pick_image(self.root)
+        if img is None:
+            return
+        if self._page_busy:
+            return
+        self._page_busy = True
+        self.lens.hide()
+        from app.page_translate import run_page_pipeline
+
+        run_page_pipeline(
+            self.root,
+            self.config,
+            image=img,
+            on_done=self._on_page_done,
+            on_error=self._on_page_error,
+        )
+
+    def _on_page_done(self) -> None:
+        self._page_busy = False
+        self.root.after(0, self.lens.show)
+
+    def _on_page_error(self, msg: str) -> None:
+        self._page_busy = False
+        self.root.after(0, self.lens.show)
+        self.root.after(
+            0,
+            lambda: messagebox.showerror("Page Translate", f"Error:\n{msg}"),
+        )
+
+    # --- Pipeline ---
 
     def _run_pipeline(self, spec: dict):
         cx = int(spec["cx"])

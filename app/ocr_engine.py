@@ -20,6 +20,7 @@ for _noisy in ("ppocr", "paddleocr", "paddle", "paddle.fluid"):
 
 _reader = None
 _reader_lang: str | None = None
+_reader_use_gpu: bool | None = None
 _DEBUG_DIR = Path(__file__).resolve().parents[1] / "debug"
 
 # OCR tuning defaults — can be overridden via config.json "ocr" key
@@ -36,13 +37,20 @@ _OCR_DEFAULTS = {
 }
 
 
-def get_reader(lang: str = "en"):
-    """Return a PaddleOCR reader for the given language code (e.g. en, japan, korean)."""
-    global _reader, _reader_lang
+def get_reader(lang: str = "en", use_gpu: bool = False):
+    """Return a PaddleOCR reader for the given language code (e.g. en, japan, korean).
+
+    use_gpu=True requires paddlepaddle-gpu to be installed:
+        pip uninstall paddlepaddle
+        pip install paddlepaddle-gpu
+    """
+    global _reader, _reader_lang, _reader_use_gpu
     code = (lang or "en").strip() or "en"
-    if _reader is not None and _reader_lang != code:
+    # Recreate reader if lang or gpu setting changed
+    if _reader is not None and (_reader_lang != code or _reader_use_gpu != use_gpu):
         _reader = None
         _reader_lang = None
+        _reader_use_gpu = None
     if _reader is None:
         import paddle
         try:
@@ -57,8 +65,12 @@ def get_reader(lang: str = "en"):
                 use_angle_cls=True,
                 lang=code,
                 show_log=False,
+                use_gpu=use_gpu,
             )
         _reader_lang = code
+        _reader_use_gpu = use_gpu
+        if use_gpu:
+            print("  OCR     : PaddleOCR GPU enabled")
     return _reader
 
 

@@ -47,6 +47,10 @@ BTN_COLOR = "#ff4444"
 BTN_HOVER = "#ff2222"
 TEST_COLOR = "#2d6be4"
 TEST_HOVER = "#1a55cc"
+PAGE_COLOR = "#1a7a4a"
+PAGE_HOVER = "#166640"
+UPLOAD_COLOR = "#555555"
+UPLOAD_HOVER = "#444444"
 TEXT_COLOR = "#ffffff"
 STATUS_OK = "#00ff88"
 STATUS_ERR = "#ff4444"
@@ -73,6 +77,8 @@ class ExitButton:
         *,
         quick_translate: bool = False,
         on_quick_translate_change=None,
+        page_translate_command=None,
+        page_upload_command=None,
     ):
         self.root = root
         self.on_exit = on_exit
@@ -172,6 +178,44 @@ class ExitButton:
         else:
             self.settings_btn = None
             self.quick_row.pack(fill=tk.X, pady=(0, 4))
+
+        if page_translate_command:
+            self.page_translate_btn = tk.Button(
+                frame,
+                text="📷 Page Capture",
+                font=("Segoe UI", 9, "bold"),
+                fg=TEXT_COLOR,
+                bg=PAGE_COLOR,
+                activebackground=PAGE_HOVER,
+                activeforeground=TEXT_COLOR,
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=10,
+                pady=5,
+                command=page_translate_command,
+            )
+            self.page_translate_btn.pack(fill=tk.X, pady=(0, 4))
+        else:
+            self.page_translate_btn = None
+
+        if page_upload_command:
+            self.page_upload_btn = tk.Button(
+                frame,
+                text="🖼 Upload Image",
+                font=("Segoe UI", 9, "bold"),
+                fg=TEXT_COLOR,
+                bg=UPLOAD_COLOR,
+                activebackground=UPLOAD_HOVER,
+                activeforeground=TEXT_COLOR,
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=10,
+                pady=5,
+                command=page_upload_command,
+            )
+            self.page_upload_btn.pack(fill=tk.X, pady=(0, 4))
+        else:
+            self.page_upload_btn = None
 
         self.test_btn = tk.Button(
             frame,
