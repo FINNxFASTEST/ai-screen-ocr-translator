@@ -16,6 +16,9 @@ OLLAMA_COMPOSE_FILE = _REPO_ROOT / "docker-compose.ollama.yml"
 OLLAMA_CONTAINER = "manga-translator-ollama"
 OLLAMA_MODEL = "gemma3:4b"
 
+# Docker Model Runner — used by Search & Fill Context
+DOCKER_SEARCH_MODEL = "docker.io/ai/gemma4:E2B"
+
 BG = "#1a1a1a"
 BG2 = "#242424"
 BG3 = "#2e2e2e"
@@ -28,10 +31,11 @@ WARN_COLOR = "#ffaa33"
 PENDING_COLOR = "#555555"
 
 _STEPS = [
-    ("packages",     "Install Python packages"),
-    ("ollama_start", "Start Ollama (Docker)"),
-    ("model_pull",   f"Pull translation model ({OLLAMA_MODEL})"),
-    ("ready",        "Ready to launch"),
+    ("packages",      "Install Python packages"),
+    ("ollama_start",  "Start Ollama (Docker)"),
+    ("model_pull",    f"Pull translation model ({OLLAMA_MODEL})"),
+    ("docker_model",  f"Pull Docker AI model ({DOCKER_SEARCH_MODEL})"),
+    ("ready",         "Ready to launch"),
 ]
 
 
@@ -247,6 +251,24 @@ class StartBar:
                 f"    docker exec {OLLAMA_CONTAINER} ollama pull {OLLAMA_MODEL}\n"
             )
 
+        # ── 4. Pull Docker Model Runner model (Search & Fill Context) ────
+        self._set_step("docker_model", "busy")
+        self._set_status(f"Pulling Docker AI model for Search & Fill Context…")
+        self._log_line(f"▸ docker model pull {DOCKER_SEARCH_MODEL}")
+        docker_model_ok = self._run_cmd(
+            ["docker", "model", "pull", DOCKER_SEARCH_MODEL],
+            label="docker model",
+        )
+        if docker_model_ok:
+            self._set_step("docker_model", "ok")
+            self._log_line("  ✓ Docker AI model ready\n")
+        else:
+            self._set_step("docker_model", "warn")
+            self._log_line(
+                f"  ! Could not pull Docker model — is Docker Desktop with Model Runner running?\n"
+                f"  Run manually:  docker model pull {DOCKER_SEARCH_MODEL}\n"
+            )
+
         # ── done ─────────────────────────────────────────────────────────
         self._set_step("ready", "ok")
         mark_setup_done()
@@ -264,6 +286,8 @@ class StartBar:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 creationflags=flags,
             )
             for raw in proc.stdout:

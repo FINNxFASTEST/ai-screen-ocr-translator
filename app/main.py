@@ -27,7 +27,7 @@ from app.lang_prefs import DEFAULT_TRANSLATE_PROMPT, source_target_from_config
 from app.status_labels import format_pipeline_backend_summary
 from app.translator import translate
 from app.memory import MemoryStore, semantic_hints_for_translate
-from app.ai_integration import PROVIDER_DOCKER, PROVIDER_OLLAMA, PROVIDER_COMPAT, resolve_translate, warmup_endpoint
+from app.ai_integration import resolve_translate
 from app.series_config import (
     append_translate_text_correction,
     apply_text_corrections,
@@ -214,7 +214,6 @@ class App:
         print(f"  Exit    : {hotkey_friendly(exit_hotkey)}" + (" / red Exit button" if show_btn else ""))
         print()
 
-        self._start_model_keepalive()
         self.root.mainloop()
 
     def _reload_hotkeys(self) -> None:
@@ -904,45 +903,6 @@ class App:
                 f.write("\n")
         except OSError as e:
             print(f"[Lens] Could not save size to config: {e}")
-
-    def _start_model_keepalive(self) -> None:
-        """Warm up the local AI model on startup and ping every 20s to prevent cold-starts."""
-        endpoint = resolve_translate(self.config)
-        provider = endpoint.provider
-        model = endpoint.model
-        if provider not in (PROVIDER_DOCKER, PROVIDER_OLLAMA, PROVIDER_COMPAT):
-            print(f"  Keepalive: skipped (provider={provider!r} not local)")
-            return
-        if not model:
-            print("  Keepalive: skipped (no model configured)")
-            return
-
-        print(f"  Keepalive: warming up {provider}/{model} @ {endpoint.base_url} ...")
-
-        # Ollama uses keep_alive=-1 per-request — no polling loop needed after warmup
-        ollama_mode = provider == PROVIDER_OLLAMA
-
-        def _loop():
-            err = warmup_endpoint(endpoint, timeout=45.0)
-            if err:
-                print(f"  Keepalive: warmup error — {err}")
-            else:
-                print(f"  Keepalive: model ready{'  (Ollama keep_alive=-1, no polling needed)' if ollama_mode else ''}")
-            if ollama_mode:
-                return
-            while True:
-                time.sleep(20)
-                try:
-                    ep = resolve_translate(self.config)
-                    if ep.provider in (PROVIDER_DOCKER, PROVIDER_COMPAT):
-                        err = warmup_endpoint(ep, timeout=20.0)
-                        if err and bool(self.config.get("debug", False)):
-                            print(f"  Keepalive: ping error — {err}")
-                except Exception as e:
-                    if bool(self.config.get("debug", False)):
-                        print(f"  Keepalive: exception — {e}")
-
-        threading.Thread(target=_loop, daemon=True).start()
 
     def _quit(self):
         self._persist_lens_geometry()
