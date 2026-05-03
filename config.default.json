@@ -56,7 +56,7 @@
     "integration": {
       "provider": "inherit"
     },
-    "enabled": false,
+    "enabled": true,
     "model": "gemma3:4b",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
@@ -71,7 +71,7 @@
     "debug": false
   },
   "ocr": {
-    "engine": "paddleocr",
+    "engine": "ai_vision",
     "upscale": 2,
     "contrast": 1.0,
     "sharpness": 1.0,

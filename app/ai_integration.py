@@ -366,6 +366,7 @@ def chat_complete(
     timeout: float,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    debug: bool = False,
 ) -> str:
     """Returns model text or a user-facing ``[Error: …]`` string."""
     messages = _normalize_openai_messages(messages)
@@ -377,6 +378,7 @@ def chat_complete(
         timeout=timeout,
         temperature=temperature,
         max_tokens=max_tokens,
+        debug=debug,
     )
 
 
@@ -417,6 +419,7 @@ def _openai_compatible_chat(
     timeout: float,
     temperature: float | None,
     max_tokens: int | None,
+    debug: bool = False,
 ) -> str:
     url = f"{endpoint.base_url}/v1/chat/completions"
     body: dict[str, Any] = {
@@ -429,6 +432,10 @@ def _openai_compatible_chat(
         body["max_tokens"] = max_tokens
     if endpoint.provider == PROVIDER_OLLAMA:
         body["keep_alive"] = -1
+    if debug:
+        import json as _json, sys as _sys
+        _safe = {k: ([{"role": m["role"], "content": str(m.get("content", ""))[:800]} for m in v] if k == "messages" else v) for k, v in body.items()}
+        print(f"[DEBUG] POST {url}\n{_json.dumps(_safe, indent=2, ensure_ascii=False)}", file=_sys.stderr, flush=True)
     try:
         r = _http_session.post(url, json=body, headers=_headers_openai(endpoint) or None, timeout=timeout)
         if not r.ok:

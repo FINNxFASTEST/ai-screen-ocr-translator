@@ -36,6 +36,7 @@ def translate(
     lean: bool = False,
     source_lang: str = DEFAULT_SOURCE_LANG,
     target_lang: str = DEFAULT_TARGET_LANG,
+    debug: bool = False,
 ) -> str:
     if not text.strip():
         return ""
@@ -70,7 +71,7 @@ def translate(
         messages.append({"role": "user", "content": prompt})
         timeout = 60
 
-    out = chat_complete(endpoint, messages, timeout=timeout)
+    out = chat_complete(endpoint, messages, timeout=timeout, debug=debug)
     if out.startswith("[Error:"):
         low = out.lower()
         if endpoint.provider == PROVIDER_DOCKER and (

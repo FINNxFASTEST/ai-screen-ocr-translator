@@ -596,6 +596,7 @@ class App:
                     lean=quick,
                     source_lang=src_lang,
                     target_lang=tgt_lang,
+                    debug=bool(self.config.get("debug")),
                 )
                 t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):
@@ -790,6 +791,7 @@ class App:
                     lean=quick,
                     source_lang=src_lang,
                     target_lang=tgt_lang,
+                    debug=bool(self.config.get("debug")),
                 )
                 t_after_translate = time.perf_counter()
                 if self._memory is not None and not translated.startswith("[Error"):

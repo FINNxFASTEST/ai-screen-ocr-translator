@@ -180,7 +180,7 @@ _SETTINGS_ROW_LABEL_GAP = (0, 12)
 _OCR_ENGINE_LABELS = (
     "PaddleOCR (local)",
     "AI Vision OCR (Docker)",
-    "olmOCR (HTTP)",
+    "Customize (HTTP)",
 )
 _OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr")
 
@@ -1396,10 +1396,132 @@ class ConfigPanel(tk.Toplevel):
         if not name:
             messagebox.showwarning("Series name", "Enter a comic or manga series name first.", parent=self)
             return
-        self._btn_search_ctx.configure(state="disabled", text="Searching…")
-        threading.Thread(target=self._do_search_context, args=(name,), daemon=True).start()
 
-    def _do_search_context(self, name: str) -> None:
+        docker_model = self._pick_docker_model_for_search()
+        if docker_model is None:
+            return
+
+        self._btn_search_ctx.configure(state="disabled", text="Searching…")
+        threading.Thread(target=self._do_search_context, args=(name, docker_model), daemon=True).start()
+
+    def _pick_docker_model_for_search(self) -> str | None:
+        """Show a modal dialog to select a Docker DMR model for Search & Fill Context."""
+        import threading as _th
+        import requests as _req
+
+        _DOCKER_BASE = "http://localhost:12434"
+        result: dict = {"model": None}
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Docker AI — Select model for Search")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(440, 320)
+
+        frm = tk.Frame(dlg, padx=12, pady=10)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            frm,
+            text=f"Docker Model Runner: {_DOCKER_BASE}\nSelect a model to use for Search & Fill Context:",
+            anchor="w",
+            justify="left",
+        ).pack(fill=tk.X, pady=(0, 6))
+
+        status = tk.Label(frm, text="Loading models…", anchor="w", fg="#666666")
+        status.pack(fill=tk.X)
+
+        lb_fr = tk.Frame(frm)
+        lb_fr.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        scrollbar = ttk.Scrollbar(lb_fr, orient="vertical")
+        lb = tk.Listbox(lb_fr, height=10, font=("Consolas", 10), yscrollcommand=scrollbar.set)
+        scrollbar.config(command=lb.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        manual_fr = tk.Frame(frm)
+        manual_fr.pack(fill=tk.X, pady=(8, 0))
+        tk.Label(manual_fr, text="Or type model ID:", anchor="w").pack(side=tk.LEFT)
+        var_manual = tk.StringVar()
+        tk.Entry(manual_fr, textvariable=var_manual).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+
+        def _dlg_alive() -> bool:
+            try:
+                return bool(dlg.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def apply_selection():
+            sel = lb.curselection()
+            if sel:
+                result["model"] = lb.get(sel[0])
+            elif var_manual.get().strip():
+                result["model"] = var_manual.get().strip()
+            else:
+                messagebox.showinfo("Select model", "Pick a model from the list or type a model ID.", parent=dlg)
+                return
+            dlg.destroy()
+
+        def on_double(_evt=None):
+            if lb.curselection():
+                apply_selection()
+
+        lb.bind("<Double-Button-1>", on_double)
+
+        btn_fr = tk.Frame(frm)
+        btn_fr.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_fr, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_fr, text="Search", command=apply_selection).pack(side=tk.RIGHT)
+
+        def load_task():
+            ids: list[str] = []
+            err: str | None = None
+            try:
+                r = _req.get(f"{_DOCKER_BASE}/v1/models", timeout=10)
+                if r.ok:
+                    ids = _parse_models_from_openai_json(r.json())
+                    if not ids:
+                        err = "No models found on Docker Model Runner."
+                else:
+                    err = f"HTTP {r.status_code}: {r.text.strip()[:200]}"
+            except Exception as exc:
+                err = str(exc)
+
+            def finish():
+                if not _dlg_alive():
+                    return
+                if err:
+                    status.configure(text=f"Could not load models: {err}", fg="#b00020")
+                else:
+                    status.configure(
+                        text=f"{len(ids)} model(s) — double-click or select then Search.",
+                        fg="#666666",
+                    )
+                    for mid in ids:
+                        lb.insert(tk.END, mid)
+
+            dlg.after(0, finish)
+
+        _th.Thread(target=load_task, daemon=True).start()
+        self.wait_window(dlg)
+        return result["model"]
+
+    def _docker_config_for_search(self, model: str) -> dict:
+        """Build a config dict that forces docker_local as provider for Search & Fill Context."""
+        import copy as _copy
+        tr = _copy.deepcopy(self._data.get("translate") or {})
+        integ = {**(tr.get("integration") or {})}
+        integ["provider"] = "docker_local"
+        integ.pop("api_key", None)
+        integ.pop("api_key_env", None)
+        tr["integration"] = integ
+        return {
+            "ai_url": "http://localhost:12434",
+            "model": model,
+            "translate": tr,
+        }
+
+    def _do_search_context(self, name: str, docker_model: str) -> None:
         import requests as req
 
         wiki_summary = ""
@@ -1446,7 +1568,7 @@ class ConfigPanel(tk.Toplevel):
             )
 
         try:
-            ep = resolve_translate(self._ai_runtime_config_snapshot())
+            ep = resolve_translate(self._docker_config_for_search(docker_model))
             generated = chat_complete(
                 ep,
                 [{"role": "user", "content": ai_input}],
@@ -1847,7 +1969,7 @@ class ConfigPanel(tk.Toplevel):
             obm = "openai_compat"
         row_olm_be = tk.Frame(of)
         row_olm_be.pack(fill=tk.X, pady=(0, 8))
-        tk.Label(row_olm_be, text="olmOCR backend:", width=18, anchor="w").pack(
+        tk.Label(row_olm_be, text="Customize backend:", width=18, anchor="w").pack(
             side=tk.LEFT,
             padx=_SETTINGS_ROW_LABEL_GAP,
         )
@@ -1917,13 +2039,13 @@ class ConfigPanel(tk.Toplevel):
 
         self._cb_olm_backend.bind("<<ComboboxSelected>>", self._on_olm_backend_changed)
         self._sync_olm_url_entry()
-        lf_olm = tk.LabelFrame(of, text="olmOCR prompt")
+        lf_olm = tk.LabelFrame(of, text="Customize prompt")
         lf_olm.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.txt_olm_ocr = ScrolledText(lf_olm, height=8, wrap=tk.WORD, font=("Consolas", 10))
         self.txt_olm_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.txt_olm_ocr.insert("1.0", olm.get("prompt", ""))
         self.var_olm_debug = tk.BooleanVar(value=bool(olm.get("debug", False)))
-        tk.Checkbutton(of, text="olmOCR debug dumps", variable=self.var_olm_debug).pack(anchor="w", pady=(8, 0))
+        tk.Checkbutton(of, text="Customize debug dumps", variable=self.var_olm_debug).pack(anchor="w", pady=(8, 0))
 
         def _on_engine(_evt=None):
             self._ocr_swap_panels(self._ocr_engine_from_ui())
