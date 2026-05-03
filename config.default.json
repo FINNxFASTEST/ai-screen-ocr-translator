@@ -1,7 +1,7 @@
 {
   "capture_hotkey": "middle_click",
-  "model": "docker.io/ai/gemma4:E2B",
-  "ai_url": "http://localhost:12434",
+  "model": "gemma3:4b",
+  "ai_url": "http://localhost:11434",
   "settings_hotkey": "f12",
   "lens_hotkey_resize_width": "<ctrl>+<alt>+bracketright",
   "lens_hotkey_resize_height_up": "<ctrl>+<alt>+equals",
@@ -34,7 +34,8 @@
   "debug": false,
   "translate": {
     "integration": {
-      "provider": "docker_local"
+      "provider": "ollama",
+      "base_url": "http://localhost:11434"
     },
     "source_lang": "English",
     "target_lang": "Thai",
@@ -55,8 +56,8 @@
     "integration": {
       "provider": "inherit"
     },
-    "enabled": true,
-    "model": "docker.io/ai/gemma4:4B",
+    "enabled": false,
+    "model": "gemma3:4b",
     "prompt": "Extract all text from this image exactly as it appears. Reply with only the extracted text, no explanations, no formatting.",
     "debug": false
   },
@@ -70,7 +71,7 @@
     "debug": false
   },
   "ocr": {
-    "engine": "ai_vision",
+    "engine": "paddleocr",
     "upscale": 2,
     "contrast": 1.0,
     "sharpness": 1.0,

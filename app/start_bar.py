@@ -10,10 +10,11 @@ CONFIG_USER_PATH = _REPO_ROOT / "config.user.json"
 CONFIG_DEFAULT_PATH = _REPO_ROOT / "config.default.json"
 CONFIG_LEGACY_PATH = _REPO_ROOT / "config.json"
 REQ_FILE = _REPO_ROOT / "requirements.txt"
+OLLAMA_COMPOSE_FILE = _REPO_ROOT / "docker-compose.ollama.yml"
 
-# Pulled on first-run wizard (Docker Model Runner)
-SETUP_DOCKER_MODEL_TRANSLATE = "docker.io/ai/gemma4:E2B"
-SETUP_DOCKER_MODEL_OCR_VISION = "docker.io/ai/gemma4:4B"
+# Ollama setup
+OLLAMA_CONTAINER = "manga-translator-ollama"
+OLLAMA_MODEL = "gemma3:4b"
 
 BG = "#1a1a1a"
 BG2 = "#242424"
@@ -27,10 +28,10 @@ WARN_COLOR = "#ffaa33"
 PENDING_COLOR = "#555555"
 
 _STEPS = [
-    ("packages", "Install Python packages"),
-    ("model_trans", "Pull translation model (gemma4:E2B)"),
-    ("model_ocr", "Pull vision OCR model (gemma4:4B)"),
-    ("ready", "Ready to launch"),
+    ("packages",     "Install Python packages"),
+    ("ollama_start", "Start Ollama (Docker)"),
+    ("model_pull",   f"Pull translation model ({OLLAMA_MODEL})"),
+    ("ready",        "Ready to launch"),
 ]
 
 
@@ -210,44 +211,40 @@ class StartBar:
             self._set_step("packages", "error")
             self._log_line("  ✗ pip failed — run manually:  pip install -r requirements.txt\n")
 
-        # ── 2. Docker models (translate + vision OCR) ────────────────────
-        self._set_step("model_trans", "busy")
-        self._set_status("Pulling translation model…")
-        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL_TRANSLATE}")
-        docker_trans_ok = self._run_cmd(
-            ["docker", "model", "pull", SETUP_DOCKER_MODEL_TRANSLATE],
+        # ── 2. Start Ollama container ─────────────────────────────────────
+        self._set_step("ollama_start", "busy")
+        self._set_status("Starting Ollama container…")
+        self._log_line(f"▸ docker compose -f docker-compose.ollama.yml up -d")
+        ollama_up = self._run_cmd(
+            ["docker", "compose", "-f", str(OLLAMA_COMPOSE_FILE), "up", "-d"],
             label="docker",
         )
-        if docker_trans_ok:
-            self._set_step("model_trans", "ok")
-            self._log_line("  ✓ translation model ready\n")
+        if ollama_up:
+            self._set_step("ollama_start", "ok")
+            self._log_line("  ✓ Ollama container running\n")
         else:
-            self._set_step("model_trans", "warn")
+            self._set_step("ollama_start", "warn")
             self._log_line(
-                "  ! Could not pull translation model — is Docker Model Runner running?\n"
+                "  ! Could not start Ollama — is Docker Desktop running?\n"
+                "  Run manually:  docker compose -f docker-compose.ollama.yml up -d\n"
             )
 
-        self._set_step("model_ocr", "busy")
-        self._set_status("Pulling vision OCR model…")
-        self._log_line(f"▸ docker model pull {SETUP_DOCKER_MODEL_OCR_VISION}")
-        docker_ocr_ok = self._run_cmd(
-            ["docker", "model", "pull", SETUP_DOCKER_MODEL_OCR_VISION],
-            label="docker",
+        # ── 3. Pull translation model into Ollama ────────────────────────
+        self._set_step("model_pull", "busy")
+        self._set_status(f"Pulling {OLLAMA_MODEL}…")
+        self._log_line(f"▸ docker exec {OLLAMA_CONTAINER} ollama pull {OLLAMA_MODEL}")
+        model_ok = self._run_cmd(
+            ["docker", "exec", OLLAMA_CONTAINER, "ollama", "pull", OLLAMA_MODEL],
+            label="ollama",
         )
-        if docker_ocr_ok:
-            self._set_step("model_ocr", "ok")
-            self._log_line("  ✓ vision OCR model ready\n")
+        if model_ok:
+            self._set_step("model_pull", "ok")
+            self._log_line("  ✓ model ready\n")
         else:
-            self._set_step("model_ocr", "warn")
+            self._set_step("model_pull", "warn")
             self._log_line(
-                "  ! Could not pull vision OCR model — is Docker Model Runner running?\n"
-            )
-
-        if not docker_trans_ok or not docker_ocr_ok:
-            self._log_line(
-                "  You can still launch the app; run the pulls manually when Model Runner is up:\n"
-                f"    docker model pull {SETUP_DOCKER_MODEL_TRANSLATE}\n"
-                f"    docker model pull {SETUP_DOCKER_MODEL_OCR_VISION}\n"
+                f"  ! Could not pull model — run manually when Ollama is up:\n"
+                f"    docker exec {OLLAMA_CONTAINER} ollama pull {OLLAMA_MODEL}\n"
             )
 
         # ── done ─────────────────────────────────────────────────────────

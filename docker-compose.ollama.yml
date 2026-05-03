@@ -1,0 +1,46 @@
+# Ollama service for the manga translator (translation + optional AI Vision OCR).
+# Models stay loaded indefinitely — no cold-start delays.
+#
+# Start:
+#   docker compose -f docker-compose.ollama.yml up -d
+#
+# Pull a model (run after the container is up):
+#   docker exec manga-translator-ollama ollama pull gemma3:4b
+#
+# Logs:
+#   docker compose -f docker-compose.ollama.yml logs -f ollama
+#
+# Then in Settings:
+#   Translation → Provider: ollama   Base URL: http://localhost:11434
+#   Model: gemma3:4b  (or whichever you pulled)
+#
+# GPU (NVIDIA): requires Docker Desktop with WSL2 backend + GPU support.
+# CPU fallback: remove the `deploy` block below — much slower but works.
+#
+# Tune via env vars (optional `.env` next to this file):
+#   OLLAMA_IMAGE, OLLAMA_TRANSLATE_MODEL, OLLAMA_PORT
+
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: manga-translator-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      # Keep every model loaded forever — eliminates cold-start delays
+      OLLAMA_KEEP_ALIVE: "-1"
+      # Increase context window (manga bubbles are short; 4096 is plenty)
+      OLLAMA_NUM_CTX: "4096"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ollama-models:

@@ -9,6 +9,9 @@ from typing import Any
 
 import requests
 
+# Shared session for connection reuse across all AI calls (thread-safe pool)
+_http_session = requests.Session()
+
 # Provider ids stored in config
 PROVIDER_DOCKER = "docker_local"
 PROVIDER_OPENAI = "openai"
@@ -424,8 +427,10 @@ def _openai_compatible_chat(
         body["temperature"] = temperature
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
+    if endpoint.provider == PROVIDER_OLLAMA:
+        body["keep_alive"] = -1
     try:
-        r = requests.post(url, json=body, headers=_headers_openai(endpoint) or None, timeout=timeout)
+        r = _http_session.post(url, json=body, headers=_headers_openai(endpoint) or None, timeout=timeout)
         if not r.ok:
             try:
                 err = r.json().get("error") or {}
@@ -469,8 +474,10 @@ def _openai_compatible_vision(
         body["temperature"] = temperature
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
+    if endpoint.provider == PROVIDER_OLLAMA:
+        body["keep_alive"] = -1
     try:
-        r = requests.post(url, json=body, headers=_headers_openai(endpoint) or None, timeout=timeout)
+        r = _http_session.post(url, json=body, headers=_headers_openai(endpoint) or None, timeout=timeout)
         if not r.ok:
             try:
                 err = r.json().get("error") or {}
@@ -516,7 +523,7 @@ def _anthropic_chat(
         "content-type": "application/json",
     }
     try:
-        r = requests.post(url, json=body, headers=headers, timeout=timeout)
+        r = _http_session.post(url, json=body, headers=headers, timeout=timeout)
         if not r.ok:
             try:
                 err = r.json().get("error") or {}
@@ -578,7 +585,7 @@ def _anthropic_vision(
         "content-type": "application/json",
     }
     try:
-        r = requests.post(url, json=body, headers=headers, timeout=timeout)
+        r = _http_session.post(url, json=body, headers=headers, timeout=timeout)
         if not r.ok:
             try:
                 err = r.json().get("error") or {}
@@ -612,7 +619,7 @@ def ping_translate(endpoint: ResolvedEndpoint) -> tuple[bool, str]:
             "anthropic-version": "2023-06-01",
         }
         try:
-            r = requests.get(url, headers=headers, timeout=8)
+            r = _http_session.get(url, headers=headers, timeout=8)
             if r.ok:
                 return True, "OK (Anthropic)"
             return False, f"HTTP {r.status_code}"
@@ -626,7 +633,7 @@ def ping_translate(endpoint: ResolvedEndpoint) -> tuple[bool, str]:
     headers = _headers_openai(endpoint)
     url = f"{endpoint.base_url}/v1/models"
     try:
-        r = requests.get(url, headers=headers or None, timeout=8)
+        r = _http_session.get(url, headers=headers or None, timeout=8)
         if not r.ok:
             # Some proxies return 404 on /v1/models — try minimal completion if Bearer set
             if endpoint.api_key and r.status_code in (401, 404):
@@ -651,9 +658,30 @@ def _ping_openai_minimal_completion(endpoint: ResolvedEndpoint) -> tuple[bool, s
         "max_tokens": 1,
     }
     try:
-        r = requests.post(url, json=body, headers=_headers_openai(endpoint), timeout=12)
+        r = _http_session.post(url, json=body, headers=_headers_openai(endpoint), timeout=12)
         if r.ok:
             return True, "OK (chat)"
         return False, f"HTTP {r.status_code}"
     except Exception as e:
         return False, str(e)[:120]
+
+
+def warmup_endpoint(endpoint: ResolvedEndpoint, timeout: float = 30.0) -> str:
+    """Send a 1-token completion to pre-load the model into DMR/Ollama memory.
+
+    Returns empty string on success, or an error message.
+    """
+    if endpoint.provider not in (PROVIDER_DOCKER, PROVIDER_OLLAMA, PROVIDER_COMPAT):
+        return f"skipped (provider={endpoint.provider!r} is not local)"
+    if not endpoint.model:
+        return "skipped (no model configured)"
+    result = _openai_compatible_chat(
+        endpoint,
+        [{"role": "user", "content": "hi"}],
+        timeout=timeout,
+        temperature=None,
+        max_tokens=1,
+    )
+    if result.startswith("[Error:"):
+        return result
+    return ""
