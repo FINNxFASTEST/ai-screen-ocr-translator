@@ -22,4 +22,4 @@ CLAUDE.md
 # Per-machine / local overrides (effective config order: config.user.json → config.default.json → config.json)
 config.user.json
 config.json
-
+command.txt

@@ -532,6 +532,8 @@ class App:
                 original = extract_text(image, ocr_cfg)
 
             t_after_ocr = time.perf_counter()
+            if debug:
+                print(f"[DEBUG] OCR result:\n{original}", flush=True)
 
             if not original or original.startswith("[Error"):
                 spinner.stop("  No text found.")
