@@ -1960,7 +1960,9 @@ class ConfigPanel(tk.Toplevel):
         self._sync_ai_ocr_url_entry()
 
         self.var_ai_ocr_manga_mode = tk.BooleanVar(value=bool(ai.get("manga_mode", False)))
-        self._ai_ocr_custom_prompt: str = ai.get("prompt", "")
+        # When manga_mode was on at save time the stored prompt IS the manga prompt,
+        # so don't use it as the restore target — start from empty instead.
+        self._ai_ocr_custom_prompt: str = "" if ai.get("manga_mode") else ai.get("prompt", "")
 
         def _on_ai_ocr_manga_toggle(*_):
             if self.var_ai_ocr_manga_mode.get():
@@ -2069,7 +2071,7 @@ class ConfigPanel(tk.Toplevel):
         self._sync_olm_url_entry()
 
         self.var_olm_manga_mode = tk.BooleanVar(value=bool(olm.get("manga_mode", False)))
-        self._olm_custom_prompt: str = olm.get("prompt", "")
+        self._olm_custom_prompt: str = "" if olm.get("manga_mode") else olm.get("prompt", "")
 
         def _on_olm_manga_toggle(*_):
             if self.var_olm_manga_mode.get():
