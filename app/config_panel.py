@@ -184,6 +184,14 @@ _OCR_ENGINE_LABELS = (
 )
 _OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr")
 
+_MANGA_COMIC_PROMPT = (
+    "This is a manga or comic panel image. Extract only the dialogue and caption text from speech bubbles, "
+    "thought bubbles, and caption boxes. Read bubbles in correct reading order "
+    "(right-to-left, top-to-bottom for Japanese manga; left-to-right for Western comics). "
+    "Ignore sound effects and onomatopoeia. Output each bubble's text on a new line. "
+    "Reply with only the extracted text — no labels, no explanations."
+)
+
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
     ("Middle mouse button", "middle_click"),
     ("Left mouse button", "left_click"),
@@ -1951,11 +1959,31 @@ class ConfigPanel(tk.Toplevel):
         self._cb_ai_ocr_backend.bind("<<ComboboxSelected>>", self._on_ai_ocr_backend_changed)
         self._sync_ai_ocr_url_entry()
 
+        self.var_ai_ocr_manga_mode = tk.BooleanVar(value=bool(ai.get("manga_mode", False)))
+        self._ai_ocr_custom_prompt: str = ai.get("prompt", "")
+
+        def _on_ai_ocr_manga_toggle(*_):
+            if self.var_ai_ocr_manga_mode.get():
+                self._ai_ocr_custom_prompt = self.txt_ai_ocr.get("1.0", "end").rstrip("\n")
+                self.txt_ai_ocr.delete("1.0", "end")
+                self.txt_ai_ocr.insert("1.0", _MANGA_COMIC_PROMPT)
+            else:
+                self.txt_ai_ocr.delete("1.0", "end")
+                self.txt_ai_ocr.insert("1.0", self._ai_ocr_custom_prompt)
+
+        tk.Checkbutton(
+            af,
+            text="Manga / comic mode  (fills prompt with bubble-aware extraction instructions)",
+            variable=self.var_ai_ocr_manga_mode,
+            command=_on_ai_ocr_manga_toggle,
+        ).pack(anchor="w", pady=(8, 2))
+
         lf_ai = tk.LabelFrame(af, text="Vision OCR prompt")
-        lf_ai.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        lf_ai.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         self.txt_ai_ocr = ScrolledText(lf_ai, height=8, wrap=tk.WORD, font=("Consolas", 10))
         self.txt_ai_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.txt_ai_ocr.insert("1.0", ai.get("prompt", ""))
+        _ai_initial_prompt = _MANGA_COMIC_PROMPT if ai.get("manga_mode") else ai.get("prompt", "")
+        self.txt_ai_ocr.insert("1.0", _ai_initial_prompt)
         self.var_ai_ocr_debug = tk.BooleanVar(value=bool(ai.get("debug", False)))
         tk.Checkbutton(af, text="AI Vision OCR debug dumps", variable=self.var_ai_ocr_debug).pack(
             anchor="w", pady=(8, 0)
@@ -2039,11 +2067,32 @@ class ConfigPanel(tk.Toplevel):
 
         self._cb_olm_backend.bind("<<ComboboxSelected>>", self._on_olm_backend_changed)
         self._sync_olm_url_entry()
+
+        self.var_olm_manga_mode = tk.BooleanVar(value=bool(olm.get("manga_mode", False)))
+        self._olm_custom_prompt: str = olm.get("prompt", "")
+
+        def _on_olm_manga_toggle(*_):
+            if self.var_olm_manga_mode.get():
+                self._olm_custom_prompt = self.txt_olm_ocr.get("1.0", "end").rstrip("\n")
+                self.txt_olm_ocr.delete("1.0", "end")
+                self.txt_olm_ocr.insert("1.0", _MANGA_COMIC_PROMPT)
+            else:
+                self.txt_olm_ocr.delete("1.0", "end")
+                self.txt_olm_ocr.insert("1.0", self._olm_custom_prompt)
+
+        tk.Checkbutton(
+            of,
+            text="Manga / comic mode  (fills prompt with bubble-aware extraction instructions)",
+            variable=self.var_olm_manga_mode,
+            command=_on_olm_manga_toggle,
+        ).pack(anchor="w", pady=(8, 2))
+
         lf_olm = tk.LabelFrame(of, text="Customize prompt")
-        lf_olm.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        lf_olm.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         self.txt_olm_ocr = ScrolledText(lf_olm, height=8, wrap=tk.WORD, font=("Consolas", 10))
         self.txt_olm_ocr.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.txt_olm_ocr.insert("1.0", olm.get("prompt", ""))
+        _olm_initial_prompt = _MANGA_COMIC_PROMPT if olm.get("manga_mode") else olm.get("prompt", "")
+        self.txt_olm_ocr.insert("1.0", _olm_initial_prompt)
         self.var_olm_debug = tk.BooleanVar(value=bool(olm.get("debug", False)))
         tk.Checkbutton(of, text="Customize debug dumps", variable=self.var_olm_debug).pack(anchor="w", pady=(8, 0))
 
@@ -2631,6 +2680,7 @@ class ConfigPanel(tk.Toplevel):
             "enabled": ocr_engine == "ai_vision",
             "model": self.var_ai_ocr_model.get().strip(),
             "prompt": self.txt_ai_ocr.get("1.0", "end").rstrip("\n"),
+            "manga_mode": bool(self.var_ai_ocr_manga_mode.get()),
             "debug": bool(self.var_ai_ocr_debug.get()),
             "integration": ai_int,
         }
@@ -2648,6 +2698,7 @@ class ConfigPanel(tk.Toplevel):
             "url": _olm_url_saved,
             "model": self.var_olm_model.get().strip(),
             "prompt": self.txt_olm_ocr.get("1.0", "end").rstrip("\n"),
+            "manga_mode": bool(self.var_olm_manga_mode.get()),
             "debug": bool(self.var_olm_debug.get()),
             "integration": olm_int,
         }
