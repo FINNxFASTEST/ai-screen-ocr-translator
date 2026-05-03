@@ -185,11 +185,12 @@ _OCR_ENGINE_LABELS = (
 _OCR_ENGINE_KEYS = ("paddleocr", "ai_vision", "olm_ocr")
 
 _MANGA_COMIC_PROMPT = (
-    "This is a manga or comic panel image. Extract only the dialogue and caption text from speech bubbles, "
-    "thought bubbles, and caption boxes. Read bubbles in correct reading order "
-    "(right-to-left, top-to-bottom for Japanese manga; left-to-right for Western comics). "
-    "Ignore sound effects and onomatopoeia. Output each bubble's text on a new line. "
-    "Reply with only the extracted text — no labels, no explanations."
+    "You are reading a manga panel. Follow these steps exactly:\n"
+    "1. Find every speech bubble, thought bubble, and caption box in the image.\n"
+    "2. Sort them by reading order: RIGHT column before LEFT column, TOP row before BOTTOM row. "
+    "If two bubbles are at roughly the same height, the one further to the RIGHT comes first.\n"
+    "3. Output the text of each bubble in that sorted order, one bubble per line.\n"
+    "Rules: ignore sound effects and onomatopoeia. No labels, no numbers, no explanations — extracted text only."
 )
 
 _CAPTURE_MOUSE_CHOICES: list[tuple[str, str]] = [
@@ -1959,6 +1960,17 @@ class ConfigPanel(tk.Toplevel):
         self._cb_ai_ocr_backend.bind("<<ComboboxSelected>>", self._on_ai_ocr_backend_changed)
         self._sync_ai_ocr_url_entry()
 
+        self.var_ai_ocr_source_lang = tk.StringVar(value=str(ai.get("source_lang", "")).strip())
+        fr_ai_slang = tk.Frame(af)
+        fr_ai_slang.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(fr_ai_slang, text="Source language:", width=18, anchor="w").pack(
+            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        tk.Entry(fr_ai_slang, textvariable=self.var_ai_ocr_source_lang, width=22).pack(side=tk.LEFT)
+        tk.Label(fr_ai_slang, text="(e.g. Japanese, Chinese, Korean — prepended to prompt so AI knows what to read)", fg="#666").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+
         self.var_ai_ocr_manga_mode = tk.BooleanVar(value=bool(ai.get("manga_mode", False)))
         # When manga_mode was on at save time the stored prompt IS the manga prompt,
         # so don't use it as the restore target — start from empty instead.
@@ -2069,6 +2081,17 @@ class ConfigPanel(tk.Toplevel):
 
         self._cb_olm_backend.bind("<<ComboboxSelected>>", self._on_olm_backend_changed)
         self._sync_olm_url_entry()
+
+        self.var_olm_source_lang = tk.StringVar(value=str(olm.get("source_lang", "")).strip())
+        fr_olm_slang = tk.Frame(of)
+        fr_olm_slang.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(fr_olm_slang, text="Source language:", width=18, anchor="w").pack(
+            side=tk.LEFT, padx=_SETTINGS_ROW_LABEL_GAP
+        )
+        tk.Entry(fr_olm_slang, textvariable=self.var_olm_source_lang, width=22).pack(side=tk.LEFT)
+        tk.Label(fr_olm_slang, text="(e.g. Japanese, Chinese, Korean — prepended to prompt so AI knows what to read)", fg="#666").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
 
         self.var_olm_manga_mode = tk.BooleanVar(value=bool(olm.get("manga_mode", False)))
         self._olm_custom_prompt: str = "" if olm.get("manga_mode") else olm.get("prompt", "")
@@ -2685,6 +2708,7 @@ class ConfigPanel(tk.Toplevel):
             "manga_mode": bool(self.var_ai_ocr_manga_mode.get()),
             "debug": bool(self.var_ai_ocr_debug.get()),
             "integration": ai_int,
+            "source_lang": self.var_ai_ocr_source_lang.get().strip(),
         }
 
         olm_int: dict = {"provider": self._olm_backend_key_from_ui()}
@@ -2703,6 +2727,7 @@ class ConfigPanel(tk.Toplevel):
             "manga_mode": bool(self.var_olm_manga_mode.get()),
             "debug": bool(self.var_olm_debug.get()),
             "integration": olm_int,
+            "source_lang": self.var_olm_source_lang.get().strip(),
         }
         if _ok:
             _olm_row["api_key"] = _ok

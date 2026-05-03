@@ -44,6 +44,9 @@ def extract_text_ai(
 
     ep = resolve_ai_ocr(config)
     prompt = ai_ocr_config.get("prompt", _DEFAULTS["prompt"])
+    source_lang = (ai_ocr_config.get("source_lang") or "").strip()
+    if source_lang:
+        prompt = f"The text in this image is written in {source_lang}.\n{prompt}"
 
     raw = vision_chat(ep, prompt=prompt, image_png_bytes=png_bytes, timeout=60)
     if raw.startswith("[Error:"):

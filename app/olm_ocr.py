@@ -41,6 +41,9 @@ def extract_text_olm(
     png_bytes = buf.getvalue()
 
     prompt = (olm_cfg.get("prompt") or _DEFAULTS["prompt"]).strip() or _DEFAULTS["prompt"]
+    source_lang = (olm_cfg.get("source_lang") or "").strip()
+    if source_lang:
+        prompt = f"The text in this image is written in {source_lang}.\n{prompt}"
 
     try:
         timeout_sec = int(olm_cfg.get("timeout") or 120)
